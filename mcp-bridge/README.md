@@ -5,7 +5,7 @@ This feature branch adds a real **opt-in MCP-to-phone control path**. The offici
 ## Features
 
 - MCP over stdio: `wasp_devices`, `wasp_observe`, `wasp_last_frame`, `wasp_tap`, `wasp_pause`.
-- Local Simba/WaspLib APIs: `wasp_source_find`, `wasp_source_read`, `wasp_stage_script`, `wasp_compile_script`.
+- Local Simba/WaspLib APIs: `wasp_pc_clients` (official WaspLib Find Client), `wasp_pc_probe` (fixed read-only Probe), `wasp_source_find`, `wasp_source_read`, `wasp_stage_script`, `wasp_compile_script`.
 - Phone: opt-in outbound HTTPS polling; screenshots and bounded taps are performed by the existing accessibility engine.
 - PC: Node 20+ relay listens only on `127.0.0.1:7788` and requires a 32+-character bearer token.
 - No generated Pascal script is executed automatically. Staging, compilation and gameplay execution are different activities.
@@ -56,6 +56,7 @@ Once connected, sample tasks are:
 - “List paired WaspMobile devices.”
 - “Pause local automation, observe the phone's current OSRS screen, and describe it.”
 - “Tap normalized x=0.42, y=0.51, then observe a new frame to verify.”
+- “Discover my PC clients and run a read-only inventory probe against the selected handle.”
 - “Search installed WaspLib for inventory APIs, create an AI draft, and compile it.”
 
 LLM tool calls have network and model latency. Fast reaction and frequent deterministic actions remain local to the phone or Simba. There is intentionally **no multi-click script runner** exposed by MCP yet.
@@ -79,6 +80,7 @@ The project's existing `RealScreenshotVisionTest.kt` still references user scree
 - Screenshot observation is sent to the paired PC and may be returned to ChatGPT after an MCP call.
 - Remote actions require most recently observed non-overlay accessibility package to match `com.jagex.oldscape.android`. This is an initial guard, **not reliable window attestation**. Improve it before split-screen or multitasking automation.
 - Touch dispatch completion does not confirm the game action succeeded; follow with a new screenshot.
+- Desktop client selection is short-lived and sourced from the installed WaspLib finder. The probe is a fixed read-only script; the bridge does not expose arbitrary desktop Act snippets or execute generated Pascal.
 - Script drafts are content-addressed, but compilation is not a sandbox. Do not execute generated Pascal blindly.
 - The separate existing Swarm HTTP server on port 7777 has unauthenticated endpoints. This branch does not expose them and does not yet fix them.
 - Inventory occupancy cannot establish item identity. Remote drops and item movement need stronger recognition and allowlists.
