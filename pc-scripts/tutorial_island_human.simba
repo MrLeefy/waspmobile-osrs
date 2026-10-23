@@ -1,0 +1,1001 @@
+(*
+# Tutorial Island Human Completer & Mainland Onboarding Engine
+100% Autonomous Account Onboarding from Fresh Login -> Mainland Lumbridge Skilling:
+  1. Endless Human Display Name Picker & Organic Mutator (NEVER clicks Jagex's bot-flagged Suggested Names!)
+  2. Anti-"Bob Shirt" Character Appearance & Color Randomizer (Spends 8-19s customizing outfit/hair/skin)
+  3. Full 10-Instructor Tutorial Island State Machine (Surface + Underground Cave + Mainland Lumbridge)
+  4. Automatic Post-Arrival Mainland Warmup (Transitions into Lumbridge/Draynor Woodcutting & Mining)
+*)
+
+{$INCLUDE_ONCE WaspLib/main.simba}
+{$INCLUDE_ONCE human_core.simba}
+
+type
+  EPostTutorialAction = enum(
+    WARMUP_LUMBRIDGE_WOODCUT,
+    WARMUP_DRAYNOR_WILLOWS,
+    STOP_AT_LUMBRIDGE_COURTYARD
+  );
+
+  TTutorialCompleter = record
+    PostAction: EPostTutorialAction;
+    CustomBaseRSN: String;
+    ChosenRSN: String;
+    DesignCompleted: Boolean;
+    StepsCompleted: UInt64;
+
+    // Tutorial Island NPCs
+    GielinorGuide, SurvivalExpert, MasterChef, QuestGuide,
+    MiningInstructor, CombatInstructor, AccountGuide,
+    BrotherBrace, MagicInstructor: TEntityArray;
+    FishingSpots, GiantRats, Chickens: TEntityArray;
+
+    // Tutorial Island Objects
+    Trees, TinRocks, CopperRocks, Furnaces, Anvils, Ranges,
+    Gates, Doors, Ladders, BankBooths, PollBooths: TObjectArray;
+  end;
+
+var
+  Tutorial: TTutorialCompleter;
+  TutorialForm: TScriptForm;
+   TutorialConfig: TConfigJSON;
+  PostActionCombo: TLazComboBox;
+  BaseRsnEdit: TLazEdit;
+
+(*
+## Tutorial.HandleDisplayNameScreen
+Detects the "Set display name" screen on fresh accounts, generates an authentic
+human RSN (or mutates it if taken), types it via `Look up name`, and clicks
+`Set name` once confirmed available.
+*)
+function TTutorialCompleter.HandleDisplayNameScreen(): Boolean;
+var
+  screenText, candidate: String;
+  lookUpBox, setNameBox: TBox;
+  attempt: Integer;
+  colors: TColorArray;
+begin
+  colors := [TFonts.GREEN, TFonts.ORANGE, TFonts.WHITE, TFonts.RED, TFonts.YELLOW];
+  screenText := LowerCase(
+    OCR.RecognizeLines(MainScreen.Bounds, Fonts.BOLD, colors, 0).Join(' ') + ' ' +
+    OCR.RecognizeLines(MainScreen.Bounds, Fonts.PLAIN_12, colors, 0).Join(' ') + ' ' +
+    OCR.RecognizeLines(MainScreen.Bounds, Fonts.PLAIN_11, colors, 0).Join(' ') + ' ' +
+    OCR.RecognizeLines(MainScreen.Bounds, Fonts.QUILL_8, colors, 0).Join(' ')
+  );
+  if not screenText.ContainsAny(['set display name', 'look up name', 'set name']) then
+    Exit(False);
+
+  Logger.Info('[Tutorial] Display Name screen detected! Generating human-style RSN...');
+  if Self.CustomBaseRSN.Trim() <> '' then
+    candidate := Self.CustomBaseRSN.Trim()
+  else
+    candidate := Human.GenerateHumanRSN();
+
+  // Fallback buttons below Suggested Names at MainScreen.Center.Y + 72 .. + 98
+  lookUpBox  := Box(MainScreen.Center.X - 95, MainScreen.Center.Y + 72, MainScreen.Center.X - 10, MainScreen.Center.Y + 98);
+  setNameBox := Box(MainScreen.Center.X + 10, MainScreen.Center.Y + 72, MainScreen.Center.X + 95, MainScreen.Center.Y + 98);
+
+  for attempt := 1 to 8 do
+  begin
+    Logger.Info('[Tutorial] Trying RSN candidate #' + ToStr(attempt) + ': "' + candidate + '"');
+    Human.ReactDelay(350, 950);
+    Mouse.Click(lookUpBox, EMouseButton.LEFT);
+
+    if Chat.WaitQuery('display name', False, 4000) or Chat.WaitQuery('name', False, 2000) then
+    begin
+      Biometrics.Sleep(450, 1200, ERandomDir.LEFT);
+      Keyboard.Send(candidate, EKeyCode.RETURN);
+      Biometrics.Sleep(1800, 3200, ERandomDir.LEFT);
+    end;
+
+    screenText := LowerCase(
+      OCR.RecognizeLines(MainScreen.Bounds, Fonts.BOLD, colors, 0).Join(' ') + ' ' +
+      OCR.RecognizeLines(MainScreen.Bounds, Fonts.PLAIN_12, colors, 0).Join(' ') + ' ' +
+      OCR.RecognizeLines(MainScreen.Bounds, Fonts.PLAIN_11, colors, 0).Join(' ') + ' ' +
+      OCR.RecognizeLines(MainScreen.Bounds, Fonts.QUILL_8, colors, 0).Join(' ')
+    );
+
+    if screenText.ContainsAny(['great', 'available']) and (not screenText.Contains('not available')) then
+    begin
+      Self.ChosenRSN := candidate;
+      Logger.Info('[Tutorial] RSN "' + candidate + '" is AVAILABLE! Clicking Set Name...');
+      Human.ReactDelay(400, 1100);
+      Mouse.Click(setNameBox, EMouseButton.LEFT);
+      Biometrics.Sleep(1800, 3200, ERandomDir.LEFT);
+      Inc(Self.StepsCompleted);
+      Exit(True);
+    end;
+
+    // Name was taken -> mutate like a real human (NEVER click Jagex's Suggested Names!)
+    if RandomBoolean(0.65) then
+      candidate := Human.MutateRSN(candidate)
+    else
+      candidate := Human.GenerateHumanRSN();
+  end;
+end;
+
+(*
+## Tutorial.HandleCharacterDesignScreen
+Defeats the #1 Tutorial Island suicide-bot signature ("Default Bob Shirt").
+Spends 8-19 seconds clicking randomized style and color arrows across Head, Jaw,
+Torso, Arms, Legs, Hair Color, Torso Color, Legs Color, and Gender before
+clicking Confirm.
+*)
+function TTutorialCompleter.HandleCharacterDesignScreen(): Boolean;
+var
+  titleText: String;
+  leftStyleCol, rightStyleCol, rightColorCol: TBoxArray;
+  genderBox, confirmBox: TBox;
+  clicks, i, rowIdx, subClicks, j: Integer;
+  colors: TColorArray;
+begin
+  if Self.DesignCompleted then
+    Exit(False);
+
+  colors := [TFonts.ORANGE, TFonts.YELLOW, TFonts.WHITE];
+  titleText := LowerCase(
+    OCR.RecognizeLines(MainScreen.Bounds, Fonts.BOLD, colors, 0).Join(' ') + ' ' +
+    OCR.RecognizeLines(MainScreen.Bounds, Fonts.PLAIN_12, colors, 0).Join(' ') + ' ' +
+    OCR.RecognizeLines(MainScreen.Bounds, Fonts.PLAIN_11, colors, 0).Join(' ') + ' ' +
+    OCR.RecognizeLines(MainScreen.Bounds, Fonts.QUILL_8, colors, 0).Join(' ')
+  );
+  if not titleText.ContainsAny(['character design', 'head', 'torso', 'confirm']) then
+    Exit(False);
+
+  if not (titleText.Contains('head') and titleText.Contains('torso')) then
+    Exit(False);
+
+  Logger.Info('[Tutorial] Character Design screen detected! Customizing non-Bob appearance...');
+  Human.ReactDelay(600, 1600);
+
+  // Left/Right style arrows (7 rows: Head, Jaw, Torso, Arms, Hands, Legs, Feet)
+  leftStyleCol  := TBoxArray.Create([MainScreen.Center.X - 185, MainScreen.Center.Y - 92], 1, 7, 22, 22, [0, 12]);
+  rightStyleCol := TBoxArray.Create([MainScreen.Center.X - 115, MainScreen.Center.Y - 92], 1, 7, 22, 22, [0, 12]);
+
+  // Right color arrows (5 rows: Hair, Torso, Legs, Feet, Skin)
+  rightColorCol := TBoxArray.Create([MainScreen.Center.X + 155, MainScreen.Center.Y - 92], 1, 5, 22, 22, [0, 12]);
+
+  // Female gender button (~38% of accounts randomize to female model)
+  if RandomBoolean(0.38) then
+  begin
+    genderBox := Box(MainScreen.Center.X + 125, MainScreen.Center.Y + 72, MainScreen.Center.X + 172, MainScreen.Center.Y + 95);
+    Mouse.Click(genderBox, EMouseButton.LEFT);
+    Biometrics.Sleep(350, 900, ERandomDir.LEFT);
+  end;
+
+  clicks := Biometrics.RandomModeInteger(9, 6, 15);
+  for i := 1 to clicks do
+  begin
+    if RandomBoolean(0.55) then
+    begin
+      rowIdx := Random(0, High(rightStyleCol));
+      subClicks := Random(1, 3);
+      for j := 1 to subClicks do
+      begin
+        if RandomBoolean(0.75) then
+          Mouse.Click(rightStyleCol[rowIdx], EMouseButton.LEFT)
+        else
+          Mouse.Click(leftStyleCol[rowIdx], EMouseButton.LEFT);
+        Biometrics.Sleep(160, 480, ERandomDir.LEFT);
+      end;
+    end
+    else
+    begin
+      rowIdx := Random(0, High(rightColorCol));
+      subClicks := Random(1, 4);
+      for j := 1 to subClicks do
+      begin
+        Mouse.Click(rightColorCol[rowIdx], EMouseButton.LEFT);
+        Biometrics.Sleep(160, 480, ERandomDir.LEFT);
+      end;
+    end;
+    Biometrics.Sleep(220, 750, ERandomDir.LEFT);
+  end;
+
+  // Click Confirm button at bottom center
+  confirmBox := Box(MainScreen.Center.X - 55, MainScreen.Center.Y + 112, MainScreen.Center.X + 55, MainScreen.Center.Y + 138);
+  Human.ReactDelay(450, 1200);
+  Mouse.Click(confirmBox, EMouseButton.LEFT);
+  Biometrics.Sleep(1200, 2200, ERandomDir.LEFT);
+
+  Self.DesignCompleted := True;
+  Inc(Self.StepsCompleted);
+  Result := True;
+end;
+
+(*
+## Tutorial.NPCDistance
+Safe distance calculator to prevent unchecked [0] indexing crashes on empty entity arrays.
+*)
+function TTutorialCompleter.NPCDistance(var npcs: TEntityArray; pt: TPoint): Double;
+begin
+  if npcs = [] then
+    Exit($FFFFFF);
+  Result := npcs[npcs.ClosestIndex(pt)].DistanceTo(pt);
+end;
+
+(*
+## Tutorial.EnsureNPC
+Ensures an NPC entity array is initialized from MapNPCs or with a valid fallback coordinate.
+*)
+procedure TTutorialCompleter.EnsureNPC(var arr: TEntityArray; name: String; fallbackCoord: TPoint);
+var
+  data: TMapNPCDataArray;
+begin
+  data := MapNPCs.GetByName(name);
+  if data <> [] then
+    arr := TEntityArray.Create(Map.Walker, data)
+  else
+    arr := [TEntity.Create(Map.Walker, [0.8, 0.8, 5.5], 40, [fallbackCoord], [name], [EDot.NPC])];
+end;
+
+(*
+## Tutorial.TalkToNPC
+Walks to and clicks an NPC in `npcs`, then steps through all dialogue pages and
+tutorial options (always declining Ironman mode at the Magic Instructor so the
+account remains a tradeable Main!).
+*)
+function TTutorialCompleter.TalkToNPC(var npcs: TEntityArray): Boolean;
+var
+  me: TPoint;
+  idx, loops: Integer;
+begin
+  if npcs = [] then
+    Exit(False);
+
+  me := Map.Position();
+  idx := npcs.ClosestIndex(me);
+
+  Human.ReactDelay(220, 680);
+  if not npcs[idx].WalkClick() then
+  begin
+    if Human.TryOpenNearbyDoor() then
+      npcs[idx].WalkClick();
+  end;
+
+  Minimap.WaitMoving();
+  Biometrics.Sleep(600, 1400, ERandomDir.LEFT);
+
+  for loops := 1 to 18 do
+  begin
+    if Chat.ContainsContinue() then
+    begin
+      Human.ReactDelay(220, 680);
+      Chat.Continue();
+      Result := True;
+      Continue;
+    end;
+
+    // Gielinor Guide & Magic Instructor dialogue choices
+    if Chat.Options.Contains('experienced player', False) then
+    begin
+      Human.ReactDelay(300, 850);
+      Chat.Options.Select('experienced player', False);
+      Result := True;
+      Continue;
+    end;
+
+    if Chat.Options.Contains('not planning to do that', False) then
+    begin
+      Human.ReactDelay(300, 850);
+      Chat.Options.Select('not planning to do that', False);
+      Result := True;
+      Continue;
+    end;
+
+    if Chat.Options.Contains('Yes', False) then
+    begin
+      Human.ReactDelay(300, 850);
+      Chat.Options.Select('Yes', False);
+      Result := True;
+      Continue;
+    end;
+
+    Break;
+  end;
+
+  if Result then
+    Inc(Self.StepsCompleted);
+end;
+
+(*
+## Tutorial.GetHintText
+Reads the Tutorial Island progress instruction box text so the script always
+knows the exact sub-step Jagex is asking for.
+*)
+function TTutorialCompleter.GetHintText(): String;
+var
+  colors: TColorArray;
+begin
+  colors := [TFonts.BLACK, TFonts.BLUE, TFonts.WHITE, TFonts.RED, TFonts.YELLOW, TFonts.ORANGE];
+  Result := LowerCase(
+    Chat.GetMessagesString() + ' ' +
+    OCR.RecognizeLines(Chat.Bounds, Fonts.BOLD, colors, 0).Join(' ') + ' ' +
+    OCR.RecognizeLines(Chat.Bounds, Fonts.PLAIN_12, colors, 0).Join(' ') + ' ' +
+    OCR.RecognizeLines(Chat.Bounds, Fonts.PLAIN_11, colors, 0).Join(' ') + ' ' +
+    OCR.RecognizeLines(Chat.Bounds, Fonts.QUILL_8, colors, 0).Join(' ')
+  );
+end;
+
+function TTutorialCompleter.GetReportValues(): TStringArray;
+begin
+  Result := [
+    'Antigravity + WaspLib',
+    'Tutorial Island',
+    Self.ChosenRSN,
+    ToStr(Self.StepsCompleted),
+    Logger.TimeRunning.ElapsedFmt()
+  ];
+end;
+
+procedure TTutorialCompleter.Init();
+begin
+  Logger.Setup('Tutorial Island Human Completer');
+  ProgressReport.Setup(
+    'Tutorial Island Human Completer',
+    ['Script by', 'Stage', 'Chosen RSN', 'Steps Done', 'Runtime'],
+    @Self.GetReportValues
+  );
+
+  if not Client.IsLoggedIn() then
+    Login.DoLogin();
+
+  Human.Setup([ESkill.WOODCUTTING, ESkill.MINING, ESkill.FISHING, ESkill.COOKING], 25, 55);
+  Human.PostLoginRitual();
+
+  // Load Tutorial Island Surface + Tutorial Island Underground Cave + Mainland Lumbridge
+  Logger.Info('Loading Tutorial Island Surface, Underground Cave & Mainland Lumbridge chunks...');
+  Map.Setup([
+    Chunk(Box(47, 49, 49, 47), [0, 1]),
+    Chunk(Box(47, 149, 49, 147), [0]),
+    EChunk.LUMBRIDGE.Get(),
+    EChunk.DRAYNOR_VILLAGE.Get()
+  ]);
+
+  // Load Tutorial Island NPCs from OSRS Cache with fallback coordinates
+  Self.EnsureNPC(Self.GielinorGuide,    'Gielinor Guide',    TMapObjects.Coordinate([3094, 3107], [1, 1], 0));
+  Self.EnsureNPC(Self.SurvivalExpert,   'Survival Expert',   TMapObjects.Coordinate([3104, 3095], [1, 1], 0));
+  Self.EnsureNPC(Self.MasterChef,       'Master Chef',       TMapObjects.Coordinate([3076, 3085], [1, 1], 0));
+  Self.EnsureNPC(Self.QuestGuide,       'Quest Guide',       TMapObjects.Coordinate([3086, 3122], [1, 1], 0));
+  Self.EnsureNPC(Self.MiningInstructor, 'Mining Instructor', TMapObjects.Coordinate([3080, 9504], [1, 1], 0));
+  Self.EnsureNPC(Self.CombatInstructor, 'Combat Instructor', TMapObjects.Coordinate([3107, 9509], [1, 1], 0));
+  Self.EnsureNPC(Self.AccountGuide,     'Account Guide',     TMapObjects.Coordinate([3125, 3124], [1, 1], 0));
+  Self.EnsureNPC(Self.BrotherBrace,     'Brother Brace',     TMapObjects.Coordinate([3126, 3106], [1, 1], 0));
+  Self.EnsureNPC(Self.MagicInstructor,  'Magic Instructor',  TMapObjects.Coordinate([3141, 3086], [1, 1], 0));
+
+  Self.EnsureNPC(Self.FishingSpots,     'Fishing spot',      TMapObjects.Coordinate([3101, 3093], [1, 1], 0));
+  Self.EnsureNPC(Self.GiantRats,        'Giant rat',         TMapObjects.Coordinate([3105, 9517], [1, 1], 0));
+  Self.EnsureNPC(Self.Chickens,         'Chicken',           TMapObjects.Coordinate([3139, 3091], [1, 1], 0));
+
+  // Load Tutorial Island Objects from OSRS Cache
+  Self.Trees      := Human.LoadObjectsByName('Tree');
+  Self.TinRocks   := Human.LoadObjectsByName('Tin rocks');
+  Self.CopperRocks:= Human.LoadObjectsByName('Copper rocks');
+  Self.Furnaces   := Human.LoadObjectsByName('Furnace');
+  Self.Anvils     := Human.LoadObjectsByName('Anvil');
+  Self.Ranges     := Human.LoadObjectsByName('Range');
+  Self.Gates      := Human.LoadObjectsByName('Gate');
+  Self.Doors      := Human.LoadObjectsByName('Door') + Human.LoadObjectsByName('Large door');
+  Self.Ladders    := Human.LoadObjectsByName('Ladder');
+  Self.BankBooths := Human.LoadObjectsByName('Bank booth');
+  Self.PollBooths := Human.LoadObjectsByName('Poll booth');
+
+  Activity.Restart();
+end;
+
+(*
+## Tutorial.ExecuteStep
+Executes the current Tutorial Island step based on live hint text and map chunk.
+Returns True once the player has arrived on Mainland Lumbridge!
+*)
+function TTutorialCompleter.ExecuteStep(): Boolean;
+var
+  pos, chunkPt: TPoint;
+  hint: String;
+  idx: Integer;
+  clickedItem: Boolean;
+begin
+  if not Client.IsLoggedIn() then
+  begin
+    Login.DoLogin();
+    Exit(False);
+  end;
+
+  pos := Map.Position();
+  chunkPt := RSTranslator.Global2Chunk(pos);
+
+  // Check if we have arrived on Mainland Lumbridge (Chunk X 49..50, Y 49..51, and X > 12550)
+  if InRange(chunkPt.X, 49, 50) and InRange(chunkPt.Y, 49, 51) and (pos.X > 12548) then
+  begin
+    Logger.Info('[Tutorial] Account has arrived in Mainland Lumbridge (' + ToStr(pos) + ')!');
+    Exit(True);
+  end;
+
+  // Stage 0 & 1: Display Name & Character Design overlays
+  if Self.HandleDisplayNameScreen() then
+    Exit(False);
+  if Self.HandleCharacterDesignScreen() then
+    Exit(False);
+
+  // Any pending "Click here to continue" dialogue
+  if Chat.ContainsContinue() then
+  begin
+    Human.ReactDelay(220, 640);
+    Chat.Continue();
+    Exit(False);
+  end;
+
+  hint := Self.GetHintText();
+
+  // Flashing GameTab steps
+  if hint.ContainsAny(['settings menu', 'spanner icon', 'options tab']) then
+  begin
+    Human.ReactDelay(250, 700);
+    GameTabs.Open(EGameTab.OPTIONS);
+    Inc(Self.StepsCompleted);
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['flashing backpack', 'inventory icon']) then
+  begin
+    Human.ReactDelay(250, 700);
+    Inventory.Open();
+    Inc(Self.StepsCompleted);
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['skills tab', 'flashing bar graph', 'stats icon']) then
+  begin
+    Human.ReactDelay(250, 700);
+    GameTabs.Open(EGameTab.STATS);
+    Inc(Self.StepsCompleted);
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['quest journal', 'flashing compass', 'quest icon']) then
+  begin
+    Human.ReactDelay(250, 700);
+    GameTabs.Open(EGameTab.ACHIEVEMENTS);
+    Inc(Self.StepsCompleted);
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['worn inventory', 'flashing helmet', 'equipment']) and (not hint.Contains('dagger')) then
+  begin
+    Human.ReactDelay(250, 700);
+    Equipment.Open();
+    Biometrics.Sleep(400, 900, ERandomDir.LEFT);
+    // Click "View equipment stats" button at bottom of Equipment tab if requested
+    if hint.Contains('equipment stats') then
+    begin
+      Mouse.Click(Box(GameTab.Bounds.X1 + 20, GameTab.Bounds.Y2 - 42, GameTab.Bounds.X1 + 60, GameTab.Bounds.Y2 - 8), EMouseButton.LEFT);
+      Biometrics.Sleep(800, 1600, ERandomDir.LEFT);
+      MSInterface.Close();
+    end;
+    Inc(Self.StepsCompleted);
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['combat interface', 'crossed swords']) then
+  begin
+    Human.ReactDelay(250, 700);
+    GameTabs.Open(EGameTab.COMBAT);
+    Inc(Self.StepsCompleted);
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['account management', 'flashing head']) then
+  begin
+    Human.ReactDelay(250, 700);
+    GameTabs.Open(EGameTab.ACCOUNT);
+    Inc(Self.StepsCompleted);
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['prayer menu', 'flashing prayer']) then
+  begin
+    Human.ReactDelay(250, 700);
+    GameTabs.Open(EGameTab.PRAYER);
+    Inc(Self.StepsCompleted);
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['friends list', 'flashing face']) then
+  begin
+    Human.ReactDelay(250, 700);
+    GameTabs.Open(EGameTab.FRIENDS);
+    Inc(Self.StepsCompleted);
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['magic menu', 'spellbook']) and (not hint.Contains('chicken')) then
+  begin
+    Human.ReactDelay(250, 700);
+    GameTabs.Open(EGameTab.MAGIC);
+    Inc(Self.StepsCompleted);
+    Exit(False);
+  end;
+
+  // Survival Expert skilling steps
+  if hint.ContainsAny(['cut down a tree', 'chop down a tree', 'some logs']) then
+  begin
+    if Human.WalkClickAny(Self.Trees) then
+    begin
+      Minimap.WaitMoving();
+      XPBar.WaitXP(10000);
+      Inc(Self.StepsCompleted);
+    end;
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['light a fire', 'make a fire']) then
+  begin
+    if Inventory.Combine('Tinderbox', 'Logs') then
+    begin
+      XPBar.WaitXP(10000);
+      Inc(Self.StepsCompleted);
+    end;
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['catch some shrimp', 'fishing spot']) then
+  begin
+    if Self.FishingSpots <> [] then
+    begin
+      idx := Self.FishingSpots.ClosestIndex(pos);
+      if Self.FishingSpots[idx].WalkClick() then
+      begin
+        Minimap.WaitMoving();
+        XPBar.WaitXP(10000);
+        Inc(Self.StepsCompleted);
+      end;
+    end;
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['cook the shrimp', 'burning them']) then
+  begin
+    if not Inventory.Items.Contains('Raw shrimps') then
+    begin
+      if Self.FishingSpots <> [] then
+      begin
+        idx := Self.FishingSpots.ClosestIndex(pos);
+        if Self.FishingSpots[idx].WalkClick() then
+        begin
+          Minimap.WaitMoving();
+          XPBar.WaitXP(10000);
+        end;
+      end;
+    end
+    else
+    begin
+      if Inventory.Select('Raw shrimps') then
+      begin
+        Biometrics.Sleep(250, 600, ERandomDir.LEFT);
+        MainScreen.Interact(MainScreen.Center, ['Fire']);
+        XPBar.WaitXP(8000);
+        Inc(Self.StepsCompleted);
+      end;
+    end;
+    Exit(False);
+  end;
+
+  // Master Chef steps
+  if hint.ContainsAny(['make dough', 'flour and water']) then
+  begin
+    if Inventory.Combine('Pot of flour', 'Bucket of water') then
+    begin
+      Biometrics.Sleep(1200, 2200, ERandomDir.LEFT);
+      Inc(Self.StepsCompleted);
+    end;
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['bake the dough', 'cooking range']) then
+  begin
+    if Human.WalkClickAny(Self.Ranges) then
+    begin
+      Minimap.WaitMoving();
+      XPBar.WaitXP(8000);
+      Inc(Self.StepsCompleted);
+    end;
+    Exit(False);
+  end;
+
+  // Mining Instructor steps
+  if (chunkPt.Y >= 140) and hint.ContainsAny(['tin ore', 'tin rock', 'mine some tin']) and (not Inventory.Items.Contains('Tin ore')) then
+  begin
+    if Human.WalkClickAny(Self.TinRocks) then
+    begin
+      Minimap.WaitMoving();
+      XPBar.WaitXP(10000);
+      Inc(Self.StepsCompleted);
+    end;
+    Exit(False);
+  end;
+
+  if (chunkPt.Y >= 140) and hint.ContainsAny(['copper ore', 'copper rock', 'mine some copper']) and (not Inventory.Items.Contains('Copper ore')) then
+  begin
+    if Human.WalkClickAny(Self.CopperRocks) then
+    begin
+      Minimap.WaitMoving();
+      XPBar.WaitXP(10000);
+      Inc(Self.StepsCompleted);
+    end;
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['bronze bar', 'furnace']) then
+  begin
+    if Human.WalkClickAny(Self.Furnaces) then
+    begin
+      Minimap.WaitMoving();
+      XPBar.WaitXP(8000);
+      Inc(Self.StepsCompleted);
+    end;
+    Exit(False);
+  end;
+
+  if hint.ContainsAny(['smith a dagger', 'anvil']) then
+  begin
+    if not Target.HasColor(TFonts.GREEN, 0, 15, Anvil.SlotsArea) then
+      Human.WalkClickAny(Self.Anvils);
+    if SleepUntil(Target.HasColor(TFonts.GREEN, 0, 15, Anvil.SlotsArea), 200, 6000) then
+    begin
+      Human.ReactDelay(300, 750);
+      Mouse.Click(Anvil.SlotBoxes[0], EMouseButton.LEFT);
+      XPBar.WaitXP(6000);
+      Inc(Self.StepsCompleted);
+    end;
+    Exit(False);
+  end;
+
+  // Combat Instructor steps
+  if hint.Contains('equip') or hint.Contains('wield') then
+  begin
+    Inventory.Open();
+    clickedItem := False;
+
+    if hint.Contains('dagger') then
+    begin
+      if Inventory.Items.Contains('Bronze dagger') then
+      begin
+        Inventory.Items.Click('Bronze dagger');
+        clickedItem := True;
+      end;
+    end
+    else if hint.ContainsAny(['bow', 'arrow']) then
+    begin
+      if Inventory.Items.Contains('Shortbow') then
+      begin
+        Inventory.Items.Click('Shortbow');
+        clickedItem := True;
+        Biometrics.Sleep(200, 450, ERandomDir.LEFT);
+      end;
+      if Inventory.Items.Contains('Bronze arrow') then
+      begin
+        Inventory.Items.Click('Bronze arrow');
+        clickedItem := True;
+      end;
+    end
+    else if hint.ContainsAny(['sword', 'shield']) then
+    begin
+      if Inventory.Items.Contains('Bronze sword') then
+      begin
+        Inventory.Items.Click('Bronze sword');
+        clickedItem := True;
+        Biometrics.Sleep(200, 450, ERandomDir.LEFT);
+      end;
+      if Inventory.Items.Contains('Wooden shield') then
+      begin
+        Inventory.Items.Click('Wooden shield');
+        clickedItem := True;
+      end;
+    end
+    else
+    begin
+      if Inventory.Items.Contains('Bronze sword') then
+      begin
+        Inventory.Items.Click('Bronze sword');
+        clickedItem := True;
+      end;
+      if Inventory.Items.Contains('Wooden shield') then
+      begin
+        Inventory.Items.Click('Wooden shield');
+        clickedItem := True;
+      end;
+    end;
+
+    if clickedItem then
+    begin
+      Inc(Self.StepsCompleted);
+      Biometrics.Sleep(400, 800, ERandomDir.LEFT);
+      Exit(False);
+    end;
+  end;
+
+  if hint.Contains('giant rat') or hint.Contains('attack the rat') then
+  begin
+    if Self.GiantRats <> [] then
+    begin
+      idx := Self.GiantRats.ClosestIndex(pos);
+      if Self.GiantRats[idx].WalkClick() then
+      begin
+        Minimap.WaitMoving();
+        XPBar.WaitXP(12000);
+        Inc(Self.StepsCompleted);
+      end;
+    end;
+    Exit(False);
+  end;
+
+  // Bank & Poll Booth steps
+  if hint.Contains('bank booth') then
+  begin
+    if Human.WalkClickAny(Self.BankBooths) and Bank.WaitOpen(6000) then
+    begin
+      Human.ReactDelay(400, 1100);
+      Bank.Close();
+      Inc(Self.StepsCompleted);
+    end;
+    Exit(False);
+  end;
+
+  if hint.Contains('poll booth') then
+  begin
+    if Human.WalkClickAny(Self.PollBooths) then
+    begin
+      Minimap.WaitMoving();
+      Biometrics.Sleep(1200, 2200, ERandomDir.LEFT);
+      while Chat.ContainsContinue() do
+        Chat.Continue();
+      MSInterface.Close();
+      Inc(Self.StepsCompleted);
+    end;
+    Exit(False);
+  end;
+
+  // Magic Instructor Chicken Wind Strike step
+  if hint.Contains('wind strike') or hint.Contains('chicken') then
+  begin
+    if Magic.Cast(ESpell.WIND_STRIKE) and (Self.Chickens <> []) then
+    begin
+      idx := Self.Chickens.ClosestIndex(pos);
+      if Self.Chickens[idx].Click() then
+      begin
+        XPBar.WaitXP(6000);
+        Inc(Self.StepsCompleted);
+      end;
+    end;
+    Exit(False);
+  end;
+
+  // Climb Ladder steps (Quest Guide down to cave, or Combat Instructor up to surface)
+  if hint.Contains('ladder') then
+  begin
+    if Human.WalkClickAny(Self.Ladders) then
+    begin
+      Minimap.WaitMoving();
+      Biometrics.Sleep(1800, 3000, ERandomDir.LEFT);
+      Inc(Self.StepsCompleted);
+    end;
+    Exit(False);
+  end;
+
+  // Door and Gate navigation hints
+  if hint.ContainsAny(['door', 'gate', 'follow the path', 'next area', 'leave the building', 'enter the building']) then
+  begin
+    if hint.Contains('gate') then
+    begin
+      if Human.WalkClickAny(Self.Gates) then
+      begin
+        Minimap.WaitMoving();
+        Inc(Self.StepsCompleted);
+      end;
+    end
+    else
+    begin
+      if Human.WalkClickAny(Self.Doors) then
+      begin
+        Minimap.WaitMoving();
+        Inc(Self.StepsCompleted);
+      end
+      else if Human.WalkClickAny(Self.Gates) then
+      begin
+        Minimap.WaitMoving();
+        Inc(Self.StepsCompleted);
+      end;
+    end;
+    Exit(False);
+  end;
+
+  // Route instructor talks by hint text first before NPCDistance
+  if hint.Contains('gielinor guide') then
+  begin
+    Self.TalkToNPC(Self.GielinorGuide);
+    Exit(False);
+  end;
+  if hint.Contains('survival expert') then
+  begin
+    Self.TalkToNPC(Self.SurvivalExpert);
+    Exit(False);
+  end;
+  if hint.Contains('master chef') or hint.Contains('chef') then
+  begin
+    Self.TalkToNPC(Self.MasterChef);
+    Exit(False);
+  end;
+  if hint.Contains('quest guide') then
+  begin
+    Self.TalkToNPC(Self.QuestGuide);
+    Exit(False);
+  end;
+  if hint.Contains('mining instructor') then
+  begin
+    Self.TalkToNPC(Self.MiningInstructor);
+    Exit(False);
+  end;
+  if hint.Contains('combat instructor') then
+  begin
+    Self.TalkToNPC(Self.CombatInstructor);
+    Exit(False);
+  end;
+  if hint.Contains('account guide') then
+  begin
+    Self.TalkToNPC(Self.AccountGuide);
+    Exit(False);
+  end;
+  if hint.Contains('brother brace') then
+  begin
+    Self.TalkToNPC(Self.BrotherBrace);
+    Exit(False);
+  end;
+  if hint.Contains('magic instructor') then
+  begin
+    Self.TalkToNPC(Self.MagicInstructor);
+    Exit(False);
+  end;
+
+  // Otherwise talk to the closest instructor NPC by safe NPCDistance!
+  if chunkPt.Y >= 140 then
+  begin
+    // Underground Cave: Mining Instructor or Combat Instructor
+    if Self.NPCDistance(Self.MiningInstructor, pos) < Self.NPCDistance(Self.CombatInstructor, pos) then
+      Self.TalkToNPC(Self.MiningInstructor)
+    else
+      Self.TalkToNPC(Self.CombatInstructor);
+  end
+  else
+  begin
+    // Surface: talk to whichever instructor is closest to our current position
+    if Self.NPCDistance(Self.GielinorGuide, pos) < 36 then
+      Self.TalkToNPC(Self.GielinorGuide)
+    else if Self.NPCDistance(Self.SurvivalExpert, pos) < 48 then
+      Self.TalkToNPC(Self.SurvivalExpert)
+    else if Self.NPCDistance(Self.MasterChef, pos) < 40 then
+      Self.TalkToNPC(Self.MasterChef)
+    else if Self.NPCDistance(Self.QuestGuide, pos) < 40 then
+      Self.TalkToNPC(Self.QuestGuide)
+    else if Self.NPCDistance(Self.AccountGuide, pos) < 40 then
+      Self.TalkToNPC(Self.AccountGuide)
+    else if Self.NPCDistance(Self.BrotherBrace, pos) < 44 then
+      Self.TalkToNPC(Self.BrotherBrace)
+    else
+      Self.TalkToNPC(Self.MagicInstructor);
+  end;
+end;
+
+(*
+## Tutorial.RunMainlandWarmup
+Once Tutorial Island finishes and the player spawns in Lumbridge Courtyard,
+automatically transitions into humanized Lumbridge/Draynor Woodcutting so you
+never have to touch the account!
+*)
+procedure TTutorialCompleter.RunMainlandWarmup();
+var
+  trees: TObjectArray;
+  wcLvl: Integer;
+begin
+  if Self.PostAction = EPostTutorialAction.STOP_AT_LUMBRIDGE_COURTYARD then
+  begin
+    Logger.Info('[Tutorial] Arrived at Lumbridge Courtyard. Onboarding complete!');
+    Exit;
+  end;
+
+  Logger.Info('[Tutorial] Starting automatic Mainland Lumbridge/Draynor Woodcutting warmup...');
+
+  wcLvl := Stats.GetLevel(ESkill.WOODCUTTING);
+  if wcLvl < 15 then
+    trees := Human.LoadObjectsByName('Tree')
+  else if wcLvl < 30 then
+    trees := Human.LoadObjectsByName('Tree') + Human.LoadObjectsByName('Oak tree')
+  else
+    trees := Human.LoadObjectsByName('Tree') + Human.LoadObjectsByName('Oak tree') + Human.LoadObjectsByName('Willow tree');
+
+  repeat
+    Human.SyncSwarm('Tutorial -> Mainland Warmup', 'LUMBRIDGE_SKILLING', Self.StepsCompleted);
+    Human.CheckAndReplyChat('woodcutting');
+
+    if Chat.LeveledUp() then
+    begin
+      Chat.HandleLevelUp();
+      wcLvl := Stats.GetLevel(ESkill.WOODCUTTING);
+      if wcLvl < 15 then
+        trees := Human.LoadObjectsByName('Tree')
+      else if wcLvl < 30 then
+        trees := Human.LoadObjectsByName('Tree') + Human.LoadObjectsByName('Oak tree')
+      else
+        trees := Human.LoadObjectsByName('Tree') + Human.LoadObjectsByName('Oak tree') + Human.LoadObjectsByName('Willow tree');
+    end;
+
+    if Inventory.Slots.Count() >= Human.InventoryLimit then
+      Human.HumanizedDrop(['Logs', 'Oak logs', 'Willow logs'])
+    else if Human.WalkClickAny(trees) then
+    begin
+      Minimap.WaitMoving();
+      XPBar.WaitXP(12000);
+      Inc(Self.StepsCompleted);
+      Human.ActionFinishDelay();
+    end;
+
+    Antiban.DoAntiban();
+    Sleep(300, 700);
+  until False;
+end;
+
+procedure TTutorialCompleter.Run();
+begin
+  Self.Init();
+
+  repeat
+    Human.SyncSwarm('Tutorial Island Completer', 'TUTORIAL_ISLAND (Step ' + ToStr(Self.StepsCompleted) + ')', Self.StepsCompleted);
+    ProgressReport.Print();
+
+    if Self.ExecuteStep() then
+      Break;
+
+    Antiban.DoAntiban();
+    Sleep(350, 850);
+  until False;
+
+  Self.RunMainlandWarmup();
+end;
+
+procedure TScriptForm.OnStart(sender: TLazObject); override;
+begin
+  inherited();
+  Tutorial.PostAction    := EPostTutorialAction(PostActionCombo.ItemIndex);
+  Tutorial.CustomBaseRSN := BaseRsnEdit.Text;
+  TutorialConfig.Save();
+end;
+
+procedure TScriptForm.Init();
+var
+  tab: TLazTabSheet;
+begin
+  TutorialConfig.Setup('scripts' + PATH_SEP + 'tutorial-island-human');
+  Self.Setup('Tutorial Island Human Completer & RSN Picker', TutorialConfig.Data);
+
+  tab := Self.CreateTab('Onboarding Settings');
+  PostActionCombo := TLazComboBox.CreateEx(tab, 'After Arriving in Lumbridge:', 'What to do automatically after Tutorial Island', 24, 32, 280, 28);
+  PostActionCombo.Items.AddStrings([
+    'Auto-Transition into Lumbridge/Draynor Woodcutting',
+    'Walk to Draynor Village Bank & Willows',
+    'Stop Cleanly in Lumbridge Courtyard'
+  ]);
+  PostActionCombo.ItemIndex := 0;
+
+  BaseRsnEdit := TLazEdit.CreateEx(tab, 'Optional Custom Base RSN (Leave blank for Endless Human Generator):', '<= 12 chars', 24, 100, 280, 28);
+  BaseRsnEdit.Text := '';
+
+  Self.CreateAntibanTab();
+  Self.CreateMiscTab();
+  Self.Run();
+end;
+
+begin
+  {$IFNDEF SIMBAHEADLESS}
+  TutorialForm.Init();
+  {$ENDIF}
+  Tutorial.Run();
+end.

@@ -1,0 +1,1557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0b0f19">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Simba OSRS Swarm Command Center</title>
+  <link rel="manifest" href="/manifest.json">
+  <style>
+    :root {
+      --bg-base: #080c14;
+      --bg-card: #0f172a;
+      --bg-card-hover: #162036;
+      --bg-panel: #131d33;
+      --border-color: #1e293b;
+      --border-accent: #0284c7;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --primary: #38bdf8;
+      --primary-dark: #0284c7;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --purple: #a855f7;
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Header & Navigation */
+    header {
+      background-color: rgba(15, 23, 42, 0.95);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border-color);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      padding: 0.75rem 1.25rem;
+    }
+
+    .header-container {
+      max-width: 1400px;
+      margin: 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .radar-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 2px solid var(--primary);
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .radar-icon::after {
+      content: '';
+      width: 8px;
+      height: 8px;
+      background-color: var(--success);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--success);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.8); }
+    }
+
+    .brand-title {
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      background: linear-gradient(135deg, #38bdf8, #818cf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-sub {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .header-metrics {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.3rem 0.65rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      background-color: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+    }
+
+    .badge.active {
+      border-color: rgba(16, 185, 129, 0.4);
+      color: var(--success);
+      background-color: rgba(16, 185, 129, 0.1);
+    }
+
+    .badge.shift {
+      border-color: rgba(168, 85, 247, 0.4);
+      color: var(--purple);
+      background-color: rgba(168, 85, 247, 0.1);
+    }
+
+    .badge.hw {
+      border-color: rgba(56, 189, 248, 0.3);
+      color: var(--primary);
+    }
+
+    .nav-tabs {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0.5rem 1.25rem 0;
+      display: flex;
+      gap: 0.5rem;
+      border-bottom: 1px solid var(--border-color);
+      overflow-x: auto;
+    }
+
+    .nav-tab {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      font-weight: 600;
+      padding: 0.6rem 1rem;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      white-space: nowrap;
+    }
+
+    .nav-tab:hover {
+      color: var(--text-main);
+    }
+
+    .nav-tab.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+
+    /* Main Container */
+    main {
+      flex: 1;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1.25rem;
+    }
+
+    .tab-content {
+      display: none;
+      animation: fadeIn 0.2s ease-in-out;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Top Stats Grid */
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .stat-card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--text-main);
+      font-family: var(--font-mono);
+    }
+
+    .stat-sub {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
+    /* Action Toolbar */
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+
+    .btn-primary {
+      background-color: var(--primary-dark);
+      color: white;
+    }
+    .btn-primary:hover {
+      background-color: #0369a1;
+    }
+
+    .btn-secondary {
+      background-color: var(--bg-panel);
+      color: var(--text-main);
+      border-color: var(--border-color);
+    }
+    .btn-secondary:hover {
+      border-color: var(--primary);
+    }
+
+    .btn-sm {
+      padding: 0.35rem 0.65rem;
+      font-size: 0.75rem;
+    }
+
+    .btn-success { background-color: rgba(16, 185, 129, 0.15); color: var(--success); border-color: rgba(16, 185, 129, 0.3); }
+    .btn-success:hover { background-color: rgba(16, 185, 129, 0.3); }
+    .btn-warning { background-color: rgba(245, 158, 11, 0.15); color: var(--warning); border-color: rgba(245, 158, 11, 0.3); }
+    .btn-warning:hover { background-color: rgba(245, 158, 11, 0.3); }
+    .btn-danger { background-color: rgba(239, 68, 68, 0.15); color: var(--danger); border-color: rgba(239, 68, 68, 0.3); }
+    .btn-danger:hover { background-color: rgba(239, 68, 68, 0.3); }
+
+    /* Bot Cards Grid */
+    .bot-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .bot-card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .bot-card:hover {
+      border-color: rgba(56, 189, 248, 0.4);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    .bot-card-header {
+      padding: 0.85rem 1rem;
+      background-color: var(--bg-panel);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .bot-title-group {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .bot-rsn {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text-main);
+      font-family: var(--font-mono);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .bot-id {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+    }
+
+    .bot-badge-group {
+      display: flex;
+      gap: 0.4rem;
+    }
+
+    .status-pill {
+      font-size: 0.7rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+
+    .status-running { background: rgba(16, 185, 129, 0.2); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.4); }
+    .status-standby { background: rgba(245, 158, 11, 0.2); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.4); }
+    .status-stopped { background: rgba(148, 163, 184, 0.1); color: var(--text-dim); border: 1px solid var(--border-color); }
+
+    /* Mini Screen Viewport */
+    .screen-viewport {
+      position: relative;
+      background-color: #050811;
+      width: 100%;
+      height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .screen-viewport img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.2s ease;
+    }
+
+    .screen-viewport:hover img {
+      transform: scale(1.02);
+    }
+
+    .screen-overlay-expand {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      padding: 0.25rem 0.5rem;
+      font-size: 0.7rem;
+      font-family: var(--font-mono);
+      color: var(--primary);
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      pointer-events: none;
+    }
+
+    /* Card Telemetry Body */
+    .bot-telemetry-body {
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      flex: 1;
+    }
+
+    .telemetry-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.8rem;
+    }
+
+    .tele-label {
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+    }
+
+    .tele-val {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .progress-bar-wrap {
+      width: 100%;
+      height: 6px;
+      background-color: var(--bg-panel);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 0.25rem;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.3s ease;
+    }
+
+    .fill-inv { background-color: var(--primary); }
+    .fill-energy { background-color: var(--success); }
+
+    /* Card Controls Footer */
+    .bot-controls-footer {
+      padding: 0.75rem 1rem;
+      background-color: var(--bg-panel);
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    /* Circadian Matrix Table */
+    .scheduler-container {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .shift-cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .shift-card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      position: relative;
+    }
+
+    .shift-card.active-shift {
+      border-color: var(--purple);
+      box-shadow: 0 0 15px rgba(168, 85, 247, 0.2);
+    }
+
+    .active-shift-ribbon {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background-color: var(--purple);
+      color: white;
+      font-size: 0.65rem;
+      font-weight: 800;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+    }
+
+    .shift-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .shift-time {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--primary);
+    }
+
+    .shift-accounts-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      margin-top: 0.5rem;
+    }
+
+    .shift-account-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-panel);
+      padding: 0.4rem 0.6rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+    }
+
+    /* RSN Generator Widget */
+    .rsn-container {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .rsn-controls-panel {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1.25rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: flex-end;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      min-width: 180px;
+      flex: 1;
+    }
+
+    .form-group label {
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    .form-control {
+      background-color: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 0.5rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      outline: none;
+    }
+
+    .form-control:focus {
+      border-color: var(--primary);
+    }
+
+    .rsn-results-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 0.75rem;
+    }
+
+    .rsn-chip {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 0.75rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .rsn-chip:hover {
+      border-color: var(--primary);
+      background-color: var(--bg-panel);
+    }
+
+    .rsn-chip-name {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      color: var(--text-main);
+      font-size: 0.95rem;
+    }
+
+    .rsn-chip-len {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--success);
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      padding: 0.15rem 0.35rem;
+      border-radius: 3px;
+    }
+
+    /* Architecture & Intel Tab */
+    .intel-container {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .intel-card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .intel-title {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: var(--primary);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .intel-p {
+      color: var(--text-muted);
+      line-height: 1.6;
+      font-size: 0.95rem;
+    }
+
+    .intel-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.5rem;
+      font-size: 0.85rem;
+    }
+
+    .intel-table th, .intel-table td {
+      border: 1px solid var(--border-color);
+      padding: 0.75rem;
+      text-align: left;
+    }
+
+    .intel-table th {
+      background-color: var(--bg-panel);
+      color: var(--primary);
+      font-family: var(--font-mono);
+    }
+
+    .intel-table td {
+      color: var(--text-main);
+    }
+
+    /* Modal */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .modal-backdrop.active {
+      display: flex;
+    }
+
+    .modal-box {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      max-width: 800px;
+      width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+    }
+
+    .modal-header {
+      padding: 1rem 1.25rem;
+      background-color: var(--bg-panel);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--text-main);
+      font-family: var(--font-mono);
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.5rem;
+      cursor: pointer;
+    }
+    .modal-close:hover { color: var(--text-main); }
+
+    .modal-body {
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .modal-screen-large {
+      width: 100%;
+      min-height: 380px;
+      background-color: #050811;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-screen-large img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .chat-console-group {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    /* Toast Notification */
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      padding: 0.75rem 1.25rem;
+      background-color: var(--bg-panel);
+      border: 1px solid var(--primary);
+      color: var(--text-main);
+      border-radius: 8px;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      z-index: 200;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: all 0.25s ease;
+      pointer-events: none;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 768px) {
+      .header-container { flex-direction: column; align-items: flex-start; }
+      .header-metrics { width: 100%; justify-content: flex-start; }
+      .bot-grid { grid-template-columns: 1fr; }
+      .rsn-controls-panel { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation & Status -->
+  <header>
+    <div class="header-container">
+      <div class="brand">
+        <div class="radar-icon"></div>
+        <div>
+          <div class="brand-title">SIMBA SWARM PWA</div>
+          <div class="brand-sub">AUTONOMOUS OSRS COMMAND CENTER</div>
+        </div>
+      </div>
+      <div class="header-metrics">
+        <span class="badge active" id="badgeStatus">PORT 7777 ONLINE</span>
+        <span class="badge shift" id="badgeShift">SHIFT 1 (05:00 - 11:00 UTC)</span>
+        <span class="badge hw">i5-11400H 6C/12T | 32GB RAM</span>
+        <a href="/WaspMobile.apk" download="WaspMobile.apk" class="btn btn-primary btn-sm" style="text-decoration:none;">&#128242; WaspMobile.apk</a>
+        <button class="btn btn-secondary btn-sm" onclick="openAddBotModal()">+ Add Bot</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Nav Tabs -->
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="switchTab('botsTab', this)">
+      <span>&#9638;</span> Telemetry &amp; Bots (<span id="botCountTab">0</span>)
+    </button>
+    <button class="nav-tab" onclick="switchTab('scheduleTab', this)">
+      <span>&#9201;</span> Circadian Scheduler
+    </button>
+    <button class="nav-tab" onclick="switchTab('rsnTab', this)">
+      <span>&#9998;</span> Human RSN Generator
+    </button>
+    <button class="nav-tab" onclick="switchTab('intelTab', this)">
+      <span>&#9881;</span> Architecture &amp; Intel
+    </button>
+  </div>
+
+  <!-- Main Body -->
+  <main>
+
+    <!-- TAB 1: TELEMETRY & BOTS -->
+    <div id="botsTab" class="tab-content active">
+      <!-- Top Stats Bar -->
+      <div class="stats-bar">
+        <div class="stat-card">
+          <div class="stat-label">Active Headed Bots</div>
+          <div class="stat-value" id="statActiveBots">0 / 6</div>
+          <div class="stat-sub">Max concurrent limit on 32GB RAM</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total Swarm Accounts</div>
+          <div class="stat-value" id="statTotalBots">0 / 24</div>
+          <div class="stat-sub">Across 4 Circadian shifts</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total Telemetry Actions</div>
+          <div class="stat-value" id="statTotalActions">0</div>
+          <div class="stat-sub">Logs chopped / Ores mined</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">RAM Utilization</div>
+          <div class="stat-value" id="statRam">~4.8 GB</div>
+          <div class="stat-sub">32 GB Total (27.2 GB Headroom)</div>
+        </div>
+      </div>
+
+      <!-- Action Toolbar -->
+      <div class="toolbar">
+        <div style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-muted);">
+          LIVE TELEMETRY STREAM &bull; AUTO-REFRESH <span id="refreshTimerText">3s</span>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <button class="btn btn-secondary btn-sm" onclick="fetchBotsData(true)">&#x21bb; Refresh Now</button>
+          <button class="btn btn-primary btn-sm" onclick="openAddBotModal()">+ Provision Bot</button>
+        </div>
+      </div>
+
+      <!-- Bots Card Grid -->
+      <div class="bot-grid" id="botsGridContainer">
+        <!-- Rendered dynamically via JavaScript -->
+      </div>
+    </div>
+
+    <!-- TAB 2: CIRCADIAN SCHEDULER -->
+    <div id="scheduleTab" class="tab-content">
+      <div class="scheduler-container">
+        <div class="intel-card">
+          <div class="intel-title">&#9201; 4-Shift Circadian Swarm Rotation Architecture</div>
+          <div class="intel-p">
+            To eradicate 24/7 account detection heuristics and respect the hardware limitations of the <strong>Intel Core i5-11400H (6C/12T)</strong> and <strong>32GB RAM</strong>, the Swarm operates on a 4-shift Circadian schedule. Exactly <strong>5-6 concurrent headed RuneLite instances</strong> run simultaneously (~1GB RAM per client), with 24 total accounts cycling across four 6-hour windows. Each account logs approximately <strong>4.5 hours of active playtime per day</strong> with 1.5 hours of natural fatigue and off-peak cooldowns.
+          </div>
+        </div>
+
+        <div class="shift-cards-grid" id="shiftCardsGrid">
+          <!-- Dynamically populated from /api/schedule -->
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: HUMAN RSN GENERATOR -->
+    <div id="rsnTab" class="tab-content">
+      <div class="rsn-container">
+        <div class="intel-card">
+          <div class="intel-title">&#9998; Authentic Human RSN Generator &amp; Taken-Name Mutator</div>
+          <div class="intel-p">
+            Fresh bots must never touch Jagex's Suggested Names (which trigger instant bot-clustering bans). This generator synthesizes authentic human display names across 6 archetypes and applies organic mutation rules (vowel l33t swaps, year suffixes, space/underscore flips) strictly bounded by the <strong>12-character OSRS name limit</strong>.
+          </div>
+        </div>
+
+        <div class="rsn-controls-panel">
+          <div class="form-group">
+            <label for="rsnArchetypeSelect">Archetype Filter</label>
+            <select id="rsnArchetypeSelect" class="form-control">
+              <option value="">All 6 Archetypes</option>
+              <option value="FIRST_LAST_COMPOUND">Compound Evocative (IronRaven, SwiftOak)</option>
+              <option value="ADJECTIVE_NOUN">Adjective + Noun (pale_peak, wild_cedar)</option>
+              <option value="CLEAN_WORD_SUFFIX">Clean Word + Suffix (Vesper88, Flint7)</option>
+              <option value="SHORT_PHRASE">Short Phrase (No Rush, Too Chill)</option>
+              <option value="OLD_SCHOOL_VIBE">Classic 2004-2007 (x_str_pure, pure_mage7)</option>
+              <option value="LOWERCASE_CASUAL">Minimalist Lowercase (kestrel, basalt)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="rsnMutateSelect">Mutation Mode</label>
+            <select id="rsnMutateSelect" class="form-control">
+              <option value="false">Base Human Names</option>
+              <option value="true">Organic Taken-Name Mutator</option>
+            </select>
+          </div>
+          <div class="form-group" style="max-width: 140px;">
+            <label for="rsnCountInput">Sample Count</label>
+            <input type="number" id="rsnCountInput" class="form-control" value="24" min="1" max="100">
+          </div>
+          <button class="btn btn-primary" onclick="generateRsnList()">Generate RSN Batch</button>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-muted);">
+            BATCH AUDIT: <span id="rsnAuditCount" style="color: var(--primary);">0</span> SAMPLES &bull;
+            <span style="color: var(--success); font-weight: 700;">100% STRICTLY &le; 12 CHARS</span>
+          </div>
+          <div style="font-size: 0.8rem; color: var(--text-dim);">Click any RSN chip to copy to clipboard</div>
+        </div>
+
+        <div class="rsn-results-grid" id="rsnResultsGrid">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: ARCHITECTURE & INTEL -->
+    <div id="intelTab" class="tab-content">
+      <div class="intel-container">
+
+        <!-- Section 1 -->
+        <div class="intel-card">
+          <div class="intel-title">&#128187; 1. Swarm Capacity on i5-11400H + 32GB RAM</div>
+          <div class="intel-p">
+            The host workstation features an <strong>Intel Core i5-11400H</strong> with 6 physical cores and 12 hyperthreaded logical cores (2.70 GHz base, 4.50 GHz turbo boost) paired with <strong>32GB of DDR4 RAM</strong>.
+          </div>
+          <table class="intel-table">
+            <thead>
+              <tr>
+                <th>Resource Dimension</th>
+                <th>Single Headed RuneLite</th>
+                <th>6-Bot Concurrent Swarm</th>
+                <th>Host Budget Headroom</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>RAM (Memory)</strong></td>
+                <td>~850MB – 1.1GB</td>
+                <td>~5.2GB – 6.6GB</td>
+                <td><strong>25.4GB Free</strong> for Windows &amp; Simba Image Engine</td>
+              </tr>
+              <tr>
+                <td><strong>CPU Utilization</strong></td>
+                <td>~12% – 16% of 1 thread</td>
+                <td>~75% – 95% of 1 thread (~8% total CPU)</td>
+                <td><strong>10+ Logical Threads Free</strong> for computer vision loops</td>
+              </tr>
+              <tr>
+                <td><strong>Render Pipeline</strong></td>
+                <td>Vanilla 15-20 FPS low-detail</td>
+                <td>6 Headed desktop viewports</td>
+                <td>WaspLib RemoteInput background window messaging</td>
+              </tr>
+              <tr>
+                <td><strong>Circadian Cycle</strong></td>
+                <td>4.5 Hours/Day</td>
+                <td>24 Accounts across 4 Shifts</td>
+                <td>Defeats 24/7 heuristic anti-cheat surveillance</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Section 2 -->
+        <div class="intel-card">
+          <div class="intel-title">&#128737; 2. Why Headed RuneLite + WaspLib RemoteInput Beats Patched Headless Clients</div>
+          <div class="intel-p">
+            Patched headless clients, reflection injections, and modified JVM classloaders are the single largest source of instantaneous bot-busting chain-bans. Jagex's anti-cheat engine scans for:
+          </div>
+          <ul style="margin-left: 1.5rem; color: var(--text-muted); line-height: 1.6; font-size: 0.9rem;">
+            <li><strong>Bytecode Fingerprinting:</strong> Altered bytecode or hook injections trigger Jagex's client integrity hashes.</li>
+            <li><strong>GPU Frame Presentation:</strong> Headless clients skip rendering pipelines. Jagex verifies canvas repaint timing, dirty region blitting, and vsync intervals.</li>
+            <li><strong>Input Vector Signatures:</strong> Directly calling internal client action methods generates instantaneous 0ms cursor teleportation, missing the mandatory human acceleration and deceleration curves.</li>
+          </ul>
+          <div class="intel-p" style="margin-top: 0.5rem;">
+            <strong>The Simba / WaspLib RemoteInput Solution:</strong> RuneLite is executed completely vanilla and unmodified via its official launcher. Simba uses <code>libremoteinput</code> to dispatch native Windows OS Win32 input events into the window handle. To the Java Virtual Machine, the operating system, and Jagex's telemetry, the mouse movements and keyboard events are indistinguishable from a physical human hand gripping a USB mouse.
+          </div>
+        </div>
+
+        <!-- Section 3 -->
+        <div class="intel-card">
+          <div class="intel-title">&#128172; 3. Guarded Public Chat + LLM Anti-Bait Architecture</div>
+          <div class="intel-p">
+            Players and bot-hunters frequently probe grinding zones with chat bait: <em>"mining lvl?"</em>, <em>"bot?"</em>, <em>"reported"</em>, or rapid trades. Canned bot replies ("I am mining coal") or constant instant chatter immediately reveal automation.
+          </div>
+          <div class="intel-p">
+            Simba's <code>human_core.simba</code> implements a multi-layer defense:
+          </div>
+          <ul style="margin-left: 1.5rem; color: var(--text-muted); line-height: 1.6; font-size: 0.9rem;">
+            <li><strong>Minimap Proximity Filter:</strong> Verifies a real player dot is within 8-12 tiles before evaluating chat text.</li>
+            <li><strong>95-240s Anti-Spam Cooldown:</strong> Enforces realistic conversational pacing; never responds repeatedly.</li>
+            <li><strong>2.2s – 5.8s Latency:</strong> Simulates cognitive reading delay plus human typing speed (~55 WPM).</li>
+            <li><strong>Authentic Lowercase OSRS Slang:</strong> Responds in natural gamer shorthand: <em>"ty"</em>, <em>"nice"</em>, <em>"afk"</em>, <em>"yeah lol"</em>, <em>"gl"</em>, <em>"almost 70"</em>.</li>
+            <li><strong>Calculated Silence:</strong> Over 70% of human players play with public chat disabled or ignore strangers. Selective silence is the most impenetrable stealth disguise.</li>
+          </ul>
+        </div>
+
+        <!-- Section 4 -->
+        <div class="intel-card">
+          <div class="intel-title">&#129302; 4. rs-sdk (2004Scape AI Agent Servers) vs. Live OSRS Stealth Botting</div>
+          <div class="intel-p">
+            It is critical to distinguish between sandbox AI agent research (such as <code>rs-sdk</code> for 2004Scape private servers) and live production OSRS stealth botting:
+          </div>
+          <table class="intel-table">
+            <thead>
+              <tr>
+                <th>Vector</th>
+                <th>rs-sdk (2004Scape AI Server)</th>
+                <th>Live OSRS Stealth Swarm (Simba/WaspLib)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Anti-Cheat Environment</strong></td>
+                <td>Zero anti-cheat. Open sandbox for reinforcement learning.</td>
+                <td>Active Jagex neural-net detection, player reporting, heuristics.</td>
+              </tr>
+              <tr>
+                <td><strong>Internal State Access</strong></td>
+                <td>Direct memory/packet access; inspects full world state.</td>
+                <td>Zero memory reading. Pure computer vision + OCR color telemetry.</td>
+              </tr>
+              <tr>
+                <td><strong>Network / IP Footprint</strong></td>
+                <td>Localhost or single server IP.</td>
+                <td>Strict per-bot SOCKS5 residential proxies with pre-launch kill-switch.</td>
+              </tr>
+              <tr>
+                <td><strong>Client Fingerprinting</strong></td>
+                <td>Custom deobfuscated client.</td>
+                <td>Vanilla headed RuneLite with per-bot isolated <code>-Duser.home</code>.</td>
+              </tr>
+              <tr>
+                <td><strong>Input Dynamics</strong></td>
+                <td>Tick-perfect programmatic actions.</td>
+                <td>Biometric fatigue, wrist-pivot waypoints, and pre-click dwells.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+
+  </main>
+
+  <!-- LIVE SCREEN STREAM MODAL -->
+  <div class="modal-backdrop" id="screenModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div class="modal-title" id="modalBotTitle">LIVE SCREEN STREAM // BOT_ID</div>
+        <button class="modal-close" onclick="closeScreenModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-screen-large">
+          <img id="modalScreenImg" src="" alt="Live Telemetry Stream">
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);">
+            STREAM STATUS: <span id="modalStreamBadge" style="color: var(--success); font-weight: 700;">STREAMING (2s)</span>
+          </div>
+          <div style="display: flex; gap: 0.4rem;">
+            <button class="btn btn-warning btn-sm" onclick="sendModalCommand('PAUSE')">Pause</button>
+            <button class="btn btn-success btn-sm" onclick="sendModalCommand('RESUME')">Resume</button>
+            <button class="btn btn-secondary btn-sm" onclick="sendModalCommand('HOP')">Hop World</button>
+            <button class="btn btn-danger btn-sm" onclick="sendModalCommand('LOGOUT_STOP')">Logout &amp; Stop</button>
+          </div>
+        </div>
+        <div class="chat-console-group">
+          <input type="text" id="modalChatInput" class="form-control" placeholder="Type in-game chat text (e.g. 'wc lvl?', 'ty bro', 'afk')">
+          <button class="btn btn-primary" onclick="sendModalChat()">Send Chat</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ADD BOT MODAL -->
+  <div class="modal-backdrop" id="addBotModal">
+    <div class="modal-box" style="max-width: 500px;">
+      <div class="modal-header">
+        <div class="modal-title">PROVISION NEW BOT PROFILE</div>
+        <button class="modal-close" onclick="closeAddBotModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="newBotId">Bot Identifier (Alphanumeric)</label>
+          <input type="text" id="newBotId" class="form-control" placeholder="e.g. bot_gatherer_07">
+        </div>
+        <div class="form-group">
+          <label for="newBotRsn">Character RSN</label>
+          <input type="text" id="newBotRsn" class="form-control" placeholder="e.g. DriftWren (max 12 chars)" maxlength="12">
+        </div>
+        <div class="form-group">
+          <label for="newBotScript">Assigned Script</label>
+          <select id="newBotScript" class="form-control">
+            <option value="DynamicWoodcutter">DynamicWoodcutter (Willow/Teak/Yew)</option>
+            <option value="DynamicMiner">DynamicMiner (Tin/Copper/Iron/Coal)</option>
+            <option value="TutorialIsland">TutorialIsland (Autonomous Onboarding)</option>
+            <option value="MasterAccountDirector">MasterAccountDirector (Multi-Skill)</option>
+          </select>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <div class="form-group">
+            <label for="newBotProxyHost">SOCKS5 Proxy Host</label>
+            <input type="text" id="newBotProxyHost" class="form-control" value="127.0.0.1" placeholder="127.0.0.1">
+          </div>
+          <div class="form-group" style="max-width: 120px;">
+            <label for="newBotProxyPort">Port</label>
+            <input type="number" id="newBotProxyPort" class="form-control" value="1080" placeholder="1080">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="newBotShift">Circadian Shift</label>
+          <select id="newBotShift" class="form-control">
+            <option value="1">Shift 1 (05:00 - 11:00 UTC) - Dawn</option>
+            <option value="2">Shift 2 (11:00 - 17:00 UTC) - Midday</option>
+            <option value="3">Shift 3 (17:00 - 23:00 UTC) - Prime</option>
+            <option value="4">Shift 4 (23:00 - 05:00 UTC) - Graveyard</option>
+          </select>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem;">
+          <button class="btn btn-secondary" onclick="closeAddBotModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="submitCreateBot()">Create Profile</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast" id="toastNotice">System Notification</div>
+
+  <script>
+    // Global State
+    let activeModalBotId = null;
+    let modalRefreshInterval = null;
+    let autoRefreshTimer = null;
+    let allBotsCache = [];
+
+    // Service Worker Registration
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').then((reg) => {
+        console.log('[PWA] Service Worker registered:', reg.scope);
+      }).catch((err) => {
+        console.warn('[PWA] Service Worker registration failed:', err);
+      });
+    }
+
+    // Tab Switcher
+    function switchTab(tabId, tabButton) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
+      document.getElementById(tabId).classList.add('active');
+      if (tabButton) tabButton.classList.add('active');
+
+      if (tabId === 'scheduleTab') fetchScheduleData();
+      if (tabId === 'rsnTab') generateRsnList();
+    }
+
+    function showToast(msg, isError = false) {
+      const toast = document.getElementById('toastNotice');
+      toast.textContent = msg;
+      toast.style.borderColor = isError ? 'var(--danger)' : 'var(--primary)';
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 3500);
+    }
+
+    // ------------------------------------------------------------------------
+    // API: Fetch Bots & Telemetry
+    // ------------------------------------------------------------------------
+    async function fetchBotsData(manual = false) {
+      try {
+        const res = await fetch('/api/bots');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        allBotsCache = data.bots || [];
+
+        renderBotsGrid(allBotsCache);
+        updateTopStats(allBotsCache);
+
+        if (manual) showToast('Telemetry synchronized successfully');
+      } catch (err) {
+        console.error('Failed to fetch bots:', err);
+        if (manual) showToast('Error connecting to Swarm server: ' + err.message, true);
+      }
+    }
+
+    function updateTopStats(bots) {
+      const activeCount = bots.filter(b => b.isRunning).length;
+      document.getElementById('statActiveBots').textContent = `${activeCount} / 6`;
+      document.getElementById('statTotalBots').textContent = `${bots.length} / 24`;
+      document.getElementById('botCountTab').textContent = bots.length;
+
+      const totalActions = bots.reduce((sum, b) => sum + (b.actions || 0), 0);
+      document.getElementById('statTotalActions').textContent = totalActions.toLocaleString();
+
+      const ramUsed = (activeCount * 0.95 + 1.2).toFixed(1);
+      document.getElementById('statRam').textContent = `~${ramUsed} GB`;
+    }
+
+    function renderBotsGrid(bots) {
+      const container = document.getElementById('botsGridContainer');
+      if (!bots || bots.length === 0) {
+        container.innerHTML = `
+          <div style="grid-column: 1/-1; text-align: center; padding: 3rem; color: var(--text-muted); font-family: var(--font-mono);">
+            No bot profiles registered yet. Click "+ Add Bot" to provision an isolated profile.
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = bots.map((bot) => {
+        const isRunning = bot.isRunning;
+        const statusClass = isRunning ? 'status-running' : (bot.state === 'STANDBY' ? 'status-standby' : 'status-stopped');
+        const statusText = isRunning ? 'RUNNING' : (bot.state || 'OFFLINE');
+        const invPct = Math.min(100, Math.round(((bot.invCount || 0) / (bot.invLimit || 28)) * 100));
+        const energyPct = Math.min(100, bot.runEnergy || 100);
+        const attentionColor = bot.attention === 'FOCUSED' ? 'var(--primary)' : (bot.attention === 'CASUAL' ? 'var(--purple)' : 'var(--warning)');
+
+        return `
+          <div class="bot-card" id="card-${bot.botId}">
+            <div class="bot-card-header">
+              <div class="bot-title-group">
+                <div class="bot-rsn">
+                  ${bot.rsn || bot.botId}
+                </div>
+                <div class="bot-id">${bot.botId} &bull; ${bot.script} &bull; Shift ${bot.shift || 1}</div>
+              </div>
+              <div class="bot-badge-group">
+                <span class="status-pill ${statusClass}">${statusText}</span>
+              </div>
+            </div>
+
+            <!-- Mini Screen Preview -->
+            <div class="screen-viewport" onclick="openScreenModal('${bot.botId}', '${bot.rsn || bot.botId}')">
+              <img src="/api/screenshot/${bot.botId}?t=${Date.now()}" alt="${bot.botId} stream" loading="lazy">
+              <div class="screen-overlay-expand">&#x2922; EXPAND STREAM</div>
+            </div>
+
+            <div class="bot-telemetry-body">
+              <div class="telemetry-row">
+                <span class="tele-label">STATE / ATTENTION</span>
+                <span class="tele-val">
+                  <span style="color: var(--primary);">${bot.state || 'STANDBY'}</span> /
+                  <span style="color: ${attentionColor};">${bot.attention || 'FOCUSED'}</span>
+                </span>
+              </div>
+
+              <div class="telemetry-row">
+                <span class="tele-label">RUNTIME / ACTIONS</span>
+                <span class="tele-val">${bot.runtimeFmt || '00:00:00'} &bull; ${bot.actions || 0} acts</span>
+              </div>
+
+              <div>
+                <div class="telemetry-row">
+                  <span class="tele-label">INVENTORY (${bot.invCount || 0}/${bot.invLimit || 28})</span>
+                  <span class="tele-val">${invPct}%</span>
+                </div>
+                <div class="progress-bar-wrap">
+                  <div class="progress-bar-fill fill-inv" style="width: ${invPct}%;"></div>
+                </div>
+              </div>
+
+              <div>
+                <div class="telemetry-row">
+                  <span class="tele-label">RUN ENERGY</span>
+                  <span class="tele-val" style="color: var(--success);">${energyPct}%</span>
+                </div>
+                <div class="progress-bar-wrap">
+                  <div class="progress-bar-fill fill-energy" style="width: ${energyPct}%;"></div>
+                </div>
+              </div>
+
+              <div class="telemetry-row">
+                <span class="tele-label">NEARBY / CHAT REPLIES</span>
+                <span class="tele-val">${bot.nearbyPlayers || 0} players &bull; ${bot.chatReplies || 0} replies</span>
+              </div>
+
+              <div class="telemetry-row">
+                <span class="tele-label">COORDS / SOCKS5 PROXY</span>
+                <span class="tele-val">(${bot.posX || 3200}, ${bot.posY || 3200}) &bull; ${bot.proxyHost ? bot.proxyHost + ':' + bot.proxyPort : 'Direct'}</span>
+              </div>
+            </div>
+
+            <div class="bot-controls-footer">
+              ${!isRunning ? `
+                <button class="btn btn-success btn-sm" onclick="launchBot('${bot.botId}')">&#9654; Launch</button>
+              ` : `
+                <button class="btn btn-danger btn-sm" onclick="stopBot('${bot.botId}')">&#9632; Stop</button>
+              `}
+              <button class="btn btn-warning btn-sm" onclick="sendCommand('${bot.botId}', 'PAUSE')">Pause</button>
+              <button class="btn btn-secondary btn-sm" onclick="sendCommand('${bot.botId}', 'RESUME')">Resume</button>
+              <button class="btn btn-secondary btn-sm" onclick="sendCommand('${bot.botId}', 'HOP')">Hop</button>
+              <button class="btn btn-secondary btn-sm" onclick="promptChat('${bot.botId}')">Chat</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // ------------------------------------------------------------------------
+    // API: Commands & Process Actions
+    // ------------------------------------------------------------------------
+    async function launchBot(botId) {
+      showToast(`Verifying proxy & launching ${botId}...`);
+      try {
+        const res = await fetch(`/api/bots/${botId}/launch`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.killSwitchEngaged) {
+            showToast(`KILL-SWITCH BLOCKED LAUNCH: ${data.error}`, true);
+          } else {
+            showToast(`Launch failed: ${data.error || 'Server error'}`, true);
+          }
+          return;
+        }
+        showToast(`Bot ${botId} launched successfully (PID: ${data.pid})`);
+        fetchBotsData();
+      } catch (err) {
+        showToast(`Launch error: ${err.message}`, true);
+      }
+    }
+
+    async function stopBot(botId) {
+      showToast(`Dispatched LOGOUT_STOP for ${botId}...`);
+      try {
+        const res = await fetch(`/api/bots/${botId}/stop`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+        showToast(`Stop dispatched: ${data.message}`);
+        fetchBotsData();
+      } catch (err) {
+        showToast(`Stop error: ${err.message}`, true);
+      }
+    }
+
+    async function sendCommand(botId, command) {
+      try {
+        const res = await fetch('/api/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ botId, command })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+        showToast(`Command sent: ${command}`);
+      } catch (err) {
+        showToast(`Command failed: ${err.message}`, true);
+      }
+    }
+
+    function promptChat(botId) {
+      const msg = prompt(`Enter chat message to send via bot ${botId}:`, 'wc lvl?');
+      if (msg && msg.trim()) {
+        sendCommand(botId, 'CHAT:' + msg.trim());
+      }
+    }
+
+    // ------------------------------------------------------------------------
+    // Modal Screen Streaming
+    // ------------------------------------------------------------------------
+    function openScreenModal(botId, rsn) {
+      activeModalBotId = botId;
+      document.getElementById('modalBotTitle').textContent = `LIVE SCREEN STREAM // ${rsn} (${botId})`;
+      const img = document.getElementById('modalScreenImg');
+      img.src = `/api/screenshot/${botId}?t=${Date.now()}`;
+      document.getElementById('screenModal').classList.add('active');
+
+      if (modalRefreshInterval) clearInterval(modalRefreshInterval);
+      modalRefreshInterval = setInterval(() => {
+        if (activeModalBotId) {
+          img.src = `/api/screenshot/${activeModalBotId}?t=${Date.now()}`;
+        }
+      }, 2000);
+    }
+
+    function closeScreenModal() {
+      activeModalBotId = null;
+      if (modalRefreshInterval) {
+        clearInterval(modalRefreshInterval);
+        modalRefreshInterval = null;
+      }
+      document.getElementById('screenModal').classList.remove('active');
+    }
+
+    function sendModalCommand(cmd) {
+      if (!activeModalBotId) return;
+      if (cmd === 'LOGOUT_STOP') {
+        stopBot(activeModalBotId);
+      } else {
+        sendCommand(activeModalBotId, cmd);
+      }
+    }
+
+    function sendModalChat() {
+      if (!activeModalBotId) return;
+      const input = document.getElementById('modalChatInput');
+      const val = input.value.trim();
+      if (!val) return;
+      sendCommand(activeModalBotId, 'CHAT:' + val);
+      input.value = '';
+    }
+
+    // ------------------------------------------------------------------------
+    // Add Bot Profile Modal
+    // ------------------------------------------------------------------------
+    function openAddBotModal() {
+      document.getElementById('addBotModal').classList.add('active');
+    }
+
+    function closeAddBotModal() {
+      document.getElementById('addBotModal').classList.remove('active');
+    }
+
+    async function submitCreateBot() {
+      const botId = document.getElementById('newBotId').value.trim();
+      const rsn = document.getElementById('newBotRsn').value.trim();
+      const script = document.getElementById('newBotScript').value;
+      const proxyHost = document.getElementById('newBotProxyHost').value.trim();
+      const proxyPort = document.getElementById('newBotProxyPort').value.trim();
+      const shift = document.getElementById('newBotShift').value;
+
+      if (!botId) {
+        alert('Please enter a Bot ID');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/bots/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ botId, rsn: rsn || botId, script, proxyHost, proxyPort, shift })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Server error');
+        showToast(`Profile created for ${botId}`);
+        closeAddBotModal();
+        fetchBotsData();
+      } catch (err) {
+        showToast(`Error creating profile: ${err.message}`, true);
+      }
+    }
+
+    // ------------------------------------------------------------------------
+    // API: Schedule Data
+    // ------------------------------------------------------------------------
+    async function fetchScheduleData() {
+      try {
+        const res = await fetch('/api/schedule');
+        const data = await res.json();
+        const grid = document.getElementById('shiftCardsGrid');
+
+        grid.innerHTML = data.shifts.map((s) => {
+          const isActive = s.id === data.currentShiftIndex;
+          return `
+            <div class="shift-card ${isActive ? 'active-shift' : ''}">
+              ${isActive ? '<div class="active-shift-ribbon">&#9679; CURRENTLY ACTIVE</div>' : ''}
+              <div class="shift-title">${s.name}</div>
+              <div class="shift-time">${s.windowUtc} &bull; Concurrent Cap: ${s.concurrentLimit}</div>
+              <div style="font-size: 0.8rem; color: var(--text-muted);">${s.description}</div>
+              <ul class="shift-accounts-list">
+                ${s.accounts.map(a => `
+                  <li class="shift-account-item">
+                    <span style="font-weight: 700; color: var(--text-main);">${a.rsn}</span>
+                    <span style="color: var(--primary);">${a.script}</span>
+                  </li>
+                `).join('')}
+              </ul>
+            </div>
+          `;
+        }).join('');
+      } catch (err) {
+        console.error('Failed to load schedule:', err);
+      }
+    }
+
+    // ------------------------------------------------------------------------
+    // API: RSN Generator
+    // ------------------------------------------------------------------------
+    async function generateRsnList() {
+      const arch = document.getElementById('rsnArchetypeSelect').value;
+      const mutate = document.getElementById('rsnMutateSelect').value;
+      const count = document.getElementById('rsnCountInput').value || 24;
+
+      try {
+        const res = await fetch(`/api/rsn/generate?count=${count}&archetype=${arch}&mutate=${mutate}`);
+        const data = await res.json();
+        const grid = document.getElementById('rsnResultsGrid');
+        document.getElementById('rsnAuditCount').textContent = data.count;
+
+        grid.innerHTML = data.names.map((item) => `
+          <div class="rsn-chip" onclick="copyRsn('${item.rsn}')" title="Click to copy">
+            <span class="rsn-chip-name">${item.rsn}</span>
+            <span class="rsn-chip-len">${item.length} chars</span>
+          </div>
+        `).join('');
+      } catch (err) {
+        showToast('Failed to generate RSNs: ' + err.message, true);
+      }
+    }
+
+    function copyRsn(name) {
+      navigator.clipboard.writeText(name).then(() => {
+        showToast(`Copied "${name}" to clipboard`);
+      });
+    }
+
+    // Initial Launch
+    fetchBotsData();
+    autoRefreshTimer = setInterval(() => {
+      fetchBotsData();
+    }, 4000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,914 @@
+(*
+# Master Account Director: Autonomous Multi-Skill Session Rotator (Simba 2.0 + WaspLib)
+Built on HumanCore v3 to solve the Macro-Level Behavioral Clustering problem:
+  - A real OSRS player does NOT run one identical 4-state loop for 12 hours.
+  - The Master Account Director divides each human play session into organic
+    22..60 minute "Activity Blocks" and transitions smoothly between:
+      1. WOODCUT_AND_FLETCH: Chops progressive trees, loots Bird nests, and
+         rotates Banking, Fletching (Knife), Firemaking (Tinderbox), and Dropping.
+      2. MINING_AND_GEMS: Walks to the region's mine, mines progressive rocks
+         (Copper/Tin -> Iron -> Coal -> Mithril), preserves uncut gems, and
+         rotates banking vs humanized power-dropping.
+      3. BANKSTAND_CRAFT_FLETCH: Walks to a randomized bank booth, deposits
+         gathered resources, processes any bankstanding items in inventory
+         (Knife + logs or Chisel + uncut gems), and performs natural bank
+         organization before rotating to the next outdoor block.
+      4. HIGH_ALCHEMY: Casts High Level Alchemy (`ESpell.HIGH_LEVEL_ALCHEMY`)
+         on any configured alchable item or strung/unstrung bows in inventory
+         with realistic human rhythm variance.
+*)
+
+{$I WaspLib/main.simba}
+{$INCLUDE_ONCE human_core.simba}
+
+type
+  EDirectorRegion = enum(
+    VARROCK_HUB,
+    DRAYNOR_LUMBRIDGE_HUB,
+    FALADOR_GUILD_HUB,
+    SEERS_CAMELOT_HUB,
+    EDGEVILLE_HUB,
+    AL_KHARID_HUB
+  );
+
+  EDirectorBlock = enum(
+    BLOCK_WOODCUT_AND_FLETCH,
+    BLOCK_MINING_AND_GEMS,
+    BLOCK_BANKSTAND_PROCESS,
+    BLOCK_HIGH_ALCHEMY
+  );
+
+  EDirectorState = enum(
+    LOGIN,
+    LEVEL_UP,
+    CLOSE_INTERFACE,
+
+    ROTATE_ACTIVITY_BLOCK,
+
+    OPEN_BANK,
+    DEPOSIT_ITEMS,
+
+    WOODCUT_CHOP,
+    WOODCUT_FLETCH,
+    WOODCUT_BURN,
+
+    MINING_MINE,
+
+    DROP_ITEMS,
+    BANKSTAND_WORK,
+    CAST_HIGH_ALCH,
+
+    USE_SPEC,
+    NO_ACTIVITY, MAX_ACTIONS, MAX_TIME, MAX_LEVEL, END_SCRIPT
+  );
+
+  TMasterDirector = record
+    Actions, MaxTime, MaxActions: UInt64;
+    LevelGoals: Boolean;
+
+    Region: EDirectorRegion;
+    CurrentBlock: EDirectorBlock;
+    BlockTimer: TCountDown;
+    NeedsCleanBankTransition: Boolean;
+
+    EnableWoodcut, EnableMining, EnableBankstand, EnableAlch: Boolean;
+    UseSpec: Boolean;
+    AlchItemName: String;
+
+    TreeObjs: TObjectArray;
+    CurrentTreeName: String;
+    CurrentLogItem: TItem;
+
+    RockObjs: TObjectArray;
+    CurrentRockName: String;
+    CopperToggle: Boolean;
+
+    KeepTools: TItemArray;
+    DroppableItems: TItemArray;
+    UncutGems: TItemArray;
+    AlchTargets: TItemArray;
+
+    SubModeBank: Boolean;
+  end;
+
+var
+  Director: TMasterDirector;
+  DirectorForm: TScriptForm;
+  DirectorConfig: TConfigJSON;
+
+  HubCombo: TLazComboBox;
+  WcBlockCheck, MineBlockCheck, BankBlockCheck, AlchBlockCheck, DirSpecCheck: TLazCheckBox;
+  AlchItemEdit: TLazEdit;
+
+procedure TMasterDirector.SetupRegion();
+begin
+  case Self.Region of
+    EDirectorRegion.VARROCK_HUB:           Human.SetupConnectedRegion([EChunk.VARROCK]);
+    EDirectorRegion.DRAYNOR_LUMBRIDGE_HUB: Human.SetupConnectedRegion([EChunk.DRAYNOR_VILLAGE, EChunk.LUMBRIDGE]);
+    EDirectorRegion.FALADOR_GUILD_HUB:
+      if Stats.GetLevel(ESkill.MINING) >= 60 then
+        Human.SetupConnectedRegion([EChunk.FALADOR, EChunk.MINING_GUILD])
+      else
+        Human.SetupConnectedRegion([EChunk.FALADOR]);
+    EDirectorRegion.SEERS_CAMELOT_HUB:     Human.SetupConnectedRegion([EChunk.SEERS_VILLAGE]);
+    EDirectorRegion.EDGEVILLE_HUB:         Human.SetupConnectedRegion([EChunk.EDGEVILLE]);
+    EDirectorRegion.AL_KHARID_HUB:         Human.SetupConnectedRegion([EChunk.AL_KHARID]);
+  end;
+end;
+
+procedure TMasterDirector.RefreshTreesForLevel();
+var
+  wcLevel: Integer;
+begin
+  wcLevel := Stats.GetLevel(ESkill.WOODCUTTING);
+
+  if (wcLevel >= 60) and RandomBoolean(0.70) then
+  begin
+    Self.CurrentTreeName := 'Yew tree';
+    Self.CurrentLogItem  := 'Yew logs';
+  end
+  else if (wcLevel >= 45) and (Self.Region = EDirectorRegion.SEERS_CAMELOT_HUB) then
+  begin
+    Self.CurrentTreeName := 'Maple tree';
+    Self.CurrentLogItem  := 'Maple logs';
+  end
+  else if (wcLevel >= 30) and RandomBoolean(0.80) then
+  begin
+    Self.CurrentTreeName := 'Willow tree';
+    Self.CurrentLogItem  := 'Willow logs';
+  end
+  else if wcLevel >= 15 then
+  begin
+    Self.CurrentTreeName := 'Oak tree';
+    Self.CurrentLogItem  := 'Oak logs';
+  end
+  else
+  begin
+    Self.CurrentTreeName := 'Tree';
+    Self.CurrentLogItem  := 'Logs';
+  end;
+
+  Self.TreeObjs := Human.LoadObjectsByName(Self.CurrentTreeName);
+  if Self.TreeObjs = [] then
+  begin
+    Self.TreeObjs := Human.LoadObjectsByName('Oak tree');
+    if Self.TreeObjs <> [] then
+    begin
+      Self.CurrentTreeName := 'Oak tree';
+      Self.CurrentLogItem  := 'Oak logs';
+    end
+    else
+    begin
+      Self.TreeObjs := Human.LoadObjectsByName('Tree');
+      Self.CurrentTreeName := 'Tree';
+      Self.CurrentLogItem  := 'Logs';
+    end;
+  end;
+
+  Logger.Info('Director Woodcut Target: ' + Self.CurrentTreeName);
+end;
+
+procedure TMasterDirector.RefreshRocksForLevel();
+var
+  mineLevel: Integer;
+begin
+  mineLevel := Stats.GetLevel(ESkill.MINING);
+
+  if (mineLevel >= 55) and RandomBoolean(0.50) then
+    Self.CurrentRockName := 'Mithril rocks'
+  else if (mineLevel >= 30) and RandomBoolean(0.60) then
+    Self.CurrentRockName := 'Coal rocks'
+  else if mineLevel >= 15 then
+    Self.CurrentRockName := 'Iron rocks'
+  else
+  begin
+    Self.CopperToggle := not Self.CopperToggle;
+    if Self.CopperToggle then
+      Self.CurrentRockName := 'Copper rocks'
+    else
+      Self.CurrentRockName := 'Tin rocks';
+  end;
+
+  Self.RockObjs := Human.LoadObjectsByName(Self.CurrentRockName);
+  if Self.RockObjs = [] then
+  begin
+    Self.RockObjs := Human.LoadObjectsByName('Iron rocks');
+    if Self.RockObjs <> [] then
+      Self.CurrentRockName := 'Iron rocks'
+    else
+    begin
+      Self.RockObjs := Human.LoadObjectsByName('Copper rocks');
+      Self.CurrentRockName := 'Copper rocks';
+    end;
+  end;
+
+  Logger.Info('Director Mining Target: ' + Self.CurrentRockName);
+end;
+
+procedure TMasterDirector.ChooseNextActivityBlock(initialPick: Boolean = False);
+var
+  candidates: array of EDirectorBlock;
+  chosen: EDirectorBlock;
+  durationMin: Integer;
+begin
+  if Self.EnableWoodcut and (Self.TreeObjs <> []) then
+    candidates += EDirectorBlock.BLOCK_WOODCUT_AND_FLETCH;
+
+  if Self.EnableMining and (Self.RockObjs <> []) then
+    candidates += EDirectorBlock.BLOCK_MINING_AND_GEMS;
+
+  if Self.EnableBankstand then
+    candidates += EDirectorBlock.BLOCK_BANKSTAND_PROCESS;
+
+  if Self.EnableAlch and Inventory.Items.Contains('Nature rune') then
+    candidates += EDirectorBlock.BLOCK_HIGH_ALCHEMY;
+
+  if Length(candidates) = 0 then
+    candidates += EDirectorBlock.BLOCK_WOODCUT_AND_FLETCH;
+
+  chosen := candidates[Random(0, High(candidates))];
+  if (not initialPick) and (Length(candidates) > 1) and (chosen = Self.CurrentBlock) then
+    chosen := candidates[(Random(0, High(candidates)))];
+
+  Self.CurrentBlock := chosen;
+  Self.SubModeBank  := RandomBoolean(0.65);
+
+  case Self.CurrentBlock of
+    EDirectorBlock.BLOCK_WOODCUT_AND_FLETCH:
+      begin
+        Self.RefreshTreesForLevel();
+        durationMin := Biometrics.RandomModeInteger(36, 22, 58);
+      end;
+
+    EDirectorBlock.BLOCK_MINING_AND_GEMS:
+      begin
+        Self.RefreshRocksForLevel();
+        durationMin := Biometrics.RandomModeInteger(32, 18, 52);
+      end;
+
+    EDirectorBlock.BLOCK_BANKSTAND_PROCESS:
+      durationMin := Biometrics.RandomModeInteger(12, 6, 22);
+
+    EDirectorBlock.BLOCK_HIGH_ALCHEMY:
+      durationMin := Biometrics.RandomModeInteger(16, 8, 28);
+  end;
+
+  Self.BlockTimer.Start(durationMin * MINUTE);
+  Self.NeedsCleanBankTransition := not initialPick;
+  Human.RollInventoryLimit();
+  Activity.Restart();
+
+  Logger.Info('=== MASTER DIRECTOR BLOCK: ' + ToStr(Self.CurrentBlock) +
+              ' for ~' + ToStr(durationMin) + ' mins ===');
+end;
+
+function TMasterDirector.GetReportValues(): TStringArray;
+var
+  actionsStr, sleepInfo, blockLeft: String;
+  xp: UInt64;
+begin
+  actionsStr := ToStr(Self.Actions);
+  if Self.MaxActions <> 0 then
+    actionsStr += '/' + ToStr(Self.MaxActions);
+
+  if Antiban.Sleeps = [] then
+    sleepInfo := 'No sleep'
+  else
+    sleepInfo := Antiban.TimeUntilSleep(Antiban.Sleeps.First, TIME_SHORT);
+
+  blockLeft := Self.BlockTimer.RemainingFmt(TIME_SHORT);
+  xp := XPBar.TotalEarnedXP(False);
+
+  Result := [
+    GetTimeStamp(TIME_SHORT),
+    Logger.TimeRunning.ElapsedFmt(TIME_SHORT),
+    ToStr(Self.CurrentBlock) + ' (' + blockLeft + ')',
+    ToStr(Human.Attention),
+    sleepInfo,
+    actionsStr,
+    FormatNumber(Self.Actions / Max(1, Logger.TimeRunning.Elapsed) * HOUR),
+    FormatNumber(xp),
+    FormatNumber(xp / Max(1, Logger.TimeRunning.Elapsed) * HOUR)
+  ];
+end;
+
+procedure TMasterDirector.Init();
+begin
+  Logger.Setup('Master Account Director');
+  ProgressReport.Setup(
+    'Master Account Director',
+    [
+      'Script runtime:', 'Botting runtime:', 'Active Block:', 'Attention State:',
+      'Next sleep:', 'Total Actions:', 'Actions/H:', 'Total XP:', 'XP/H:'
+    ],
+    @Self.GetReportValues
+  );
+
+  Human.Setup(
+    [
+      ESkill.WOODCUTTING, ESkill.MINING, ESkill.FLETCHING,
+      ESkill.FIREMAKING, ESkill.CRAFTING, ESkill.MAGIC, ESkill.TOTAL
+    ],
+    22, 64
+  );
+
+  if not Client.IsLoggedIn() then
+    Login.DoLogin();
+
+  StartListeners(300);
+
+  Self.KeepTools := [
+    'Knife', 'Tinderbox', 'Chisel', 'Nature rune', 'Law rune', 'Air rune',
+    'Fire rune', 'Earth rune', 'Water rune', 'Coins',
+    'Varrock teleport', 'Falador teleport', 'Lumbridge teleport', 'Camelot teleport',
+    'Bronze axe', 'Iron axe', 'Steel axe', 'Black axe', 'Mithril axe',
+    'Adamant axe', 'Rune axe', 'Dragon axe', 'Infernal axe', 'Crystal axe',
+    'Bronze felling axe', 'Iron felling axe', 'Steel felling axe',
+    'Black felling axe', 'Mithril felling axe', 'Adamant felling axe',
+    'Rune felling axe', 'Dragon felling axe', 'Crystal felling axe',
+    'Bronze pickaxe', 'Iron pickaxe', 'Steel pickaxe', 'Black pickaxe',
+    'Mithril pickaxe', 'Adamant pickaxe', 'Rune pickaxe', 'Dragon pickaxe',
+    'Infernal pickaxe', 'Crystal pickaxe'
+  ];
+
+  Self.DroppableItems := [
+    'Logs', 'Oak logs', 'Willow logs', 'Maple logs', 'Yew logs',
+    'Arrow shaft', 'Shortbow (u)', 'Longbow (u)',
+    'Oak shortbow (u)', 'Oak longbow (u)',
+    'Willow shortbow (u)', 'Willow longbow (u)',
+    'Maple shortbow (u)', 'Maple longbow (u)',
+    'Yew shortbow (u)', 'Yew longbow (u)',
+    'Clay', 'Copper ore', 'Tin ore', 'Iron ore', 'Silver ore',
+    'Coal', 'Gold ore', 'Mithril ore', 'Adamantite ore'
+  ];
+
+  Self.UncutGems := [
+    'Uncut sapphire', 'Uncut emerald', 'Uncut ruby', 'Uncut diamond'
+  ];
+
+  Self.AlchTargets := [
+    'Longbow', 'Oak longbow', 'Willow longbow', 'Maple longbow', 'Yew longbow',
+    'Magic longbow', 'Gold bracelet', 'Sapphire bracelet', 'Emerald bracelet',
+    'Ruby bracelet', 'Diamond bracelet', 'Green d''hide body', 'Rune javelin'
+  ];
+  if Self.AlchItemName <> '' then
+  begin
+    Self.AlchTargets += Self.AlchItemName;
+    Self.KeepTools   += Self.AlchItemName;
+  end;
+
+  Self.SetupRegion();
+  Human.EnsureTools(
+    Self.EnableWoodcut,
+    Self.EnableMining,
+    Self.EnableWoodcut or Self.EnableBankstand,
+    Self.EnableBankstand
+  );
+  Self.RefreshTreesForLevel();
+  Self.RefreshRocksForLevel();
+  Self.ChooseNextActivityBlock(True);
+  Activity.Restart();
+end;
+
+function TMasterDirector.IsPlayerAnimating(): Boolean;
+var
+  playerBox: TBox;
+begin
+  playerBox := TBox.Create(MainScreen.Center, 32, 36);
+  Result := Target.GetPixelDifference(350, playerBox).Length >= 34;
+end;
+
+procedure TMasterDirector.WaitWoodcutting();
+var
+  timeout: TCountDown;
+  earned: Boolean;
+begin
+  timeout.Start(Biometrics.RandomModeInteger(14000, 9000, 23000));
+  repeat
+    earned := XPBar.EarnedXP();
+    if earned then
+    begin
+      Inc(Self.Actions);
+      timeout.Restart(0, 4000);
+      if Inventory.Slots.Count() >= Human.InventoryLimit then
+        Break;
+    end;
+    if Chat.LeveledUp() then Exit;
+    if Human.CheckAndPickupNest() then
+    begin
+      if Inventory.Slots.Count() >= Human.InventoryLimit then
+        Break;
+      Break;
+    end;
+
+    Antiban.DoAntiban(True, False, False);
+    Sleep(240, 520);
+  until timeout.IsFinished or ((not earned) and (not Self.IsPlayerAnimating()));
+
+  Human.ActionFinishDelay();
+end;
+
+procedure TMasterDirector.WaitMiningVein();
+var
+  timeout: TCountDown;
+  earned: Boolean;
+begin
+  timeout.Start(Biometrics.RandomModeInteger(7500, 4500, 13500));
+  repeat
+    earned := XPBar.EarnedXP();
+    if earned then
+    begin
+      Inc(Self.Actions);
+      if RandomBoolean(0.82) then Break;
+      timeout.Restart(0, 2800);
+      if Inventory.Slots.Count() >= Human.InventoryLimit then
+        Break;
+    end;
+    if Chat.LeveledUp() then Exit;
+
+    Antiban.DoAntiban(True, False, False);
+    Sleep(180, 420);
+  until timeout.IsFinished or ((not earned) and (not Self.IsPlayerAnimating()));
+
+  Human.ActionFinishDelay();
+end;
+
+procedure TMasterDirector.DoFletchInventory();
+var
+  timeout: TCountDown;
+begin
+  Human.ReactDelay(220, 700);
+  if Inventory.Combine('Knife', Self.CurrentLogItem) and Make.WaitOpen(4 * TICK) then
+  begin
+    Human.ReactDelay(240, 650);
+    if Make.Select(0, QUANTITY_ALL) then
+    begin
+      timeout.Start(45000);
+      repeat
+        if XPBar.EarnedXP() then
+        begin
+          Inc(Self.Actions);
+          timeout.Restart(0, 3000);
+        end;
+        if Chat.LeveledUp() then Break;
+        Sleep(280, 620);
+      until timeout.IsFinished or (not Inventory.Items.Contains(Self.CurrentLogItem));
+      Human.ActionFinishDelay();
+    end;
+  end;
+
+  if Inventory.Slots.Count() >= Human.InventoryLimit then
+    Human.HumanizedDrop(Self.DroppableItems);
+  Human.RollInventoryLimit();
+end;
+
+procedure TMasterDirector.DoBurnBatch();
+var
+  burns, i: Integer;
+begin
+  burns := Biometrics.RandomModeInteger(3, 2, 5);
+  for i := 1 to burns do
+  begin
+    if not Inventory.Items.Contains(Self.CurrentLogItem) then Break;
+    Human.ReactDelay(220, 640);
+    if Inventory.Combine('Tinderbox', Self.CurrentLogItem) then
+    begin
+      if XPBar.WaitXP(6 * TICK) then
+        Inc(Self.Actions);
+      Minimap.WaitMoving(4000);
+    end;
+  end;
+  Human.HumanizedDrop(Self.DroppableItems);
+end;
+
+procedure TMasterDirector.DoBankstandProcess();
+var
+  gem: TItem;
+  timeout: TCountDown;
+begin
+  // 1. Cut any uncut gems in inventory if we have a Chisel
+  if Inventory.Items.Contains('Chisel') and Inventory.Items.ContainsAny(Self.UncutGems) then
+  begin
+    for gem in Self.UncutGems do
+      if Inventory.Items.Contains(gem) then
+      begin
+        Human.ReactDelay(240, 680);
+        if Inventory.Combine('Chisel', gem) and Make.WaitOpen(4 * TICK) then
+        begin
+          Make.Select(0, QUANTITY_ALL);
+          timeout.Start(22000);
+          repeat
+            if XPBar.EarnedXP() then
+            begin
+              Inc(Self.Actions);
+              timeout.Restart(0, 2600);
+            end;
+            Sleep(250, 500);
+          until timeout.IsFinished or (not Inventory.Items.Contains(gem));
+        end;
+      end;
+    Exit;
+  end;
+
+  // 2. Fletch any logs in inventory if we have a Knife
+  if Inventory.Items.Contains('Knife') and Inventory.Items.Contains(Self.CurrentLogItem) then
+  begin
+    Self.DoFletchInventory();
+    Exit;
+  end;
+
+  // 3. Otherwise visit the bank, deposit items, and admire stats/tabs like a human
+  if not Bank.IsOpen() then
+  begin
+    if Human.OpenBank() and Inventory.Items.ContainsDifferent(Self.KeepTools) then
+      Human.DepositItems(Self.KeepTools);
+  end
+  else
+  begin
+    if Inventory.Items.ContainsDifferent(Self.KeepTools) then
+      Human.DepositItems(Self.KeepTools);
+    Bank.Close();
+  end;
+
+  Antiban.DoAntiban();
+  Biometrics.Sleep(1800, 5200, ERandomDir.LEFT);
+  // Once inventory is clean at the bank, move on to an active outdoor block early if nothing left to process
+  if RandomBoolean(0.45) then
+    Self.ChooseNextActivityBlock(False);
+end;
+
+procedure TMasterDirector.DoHighAlchemy();
+var
+  targetItem, candidate: TItem;
+  foundTarget: Boolean;
+begin
+  if (Stats.GetLevel(ESkill.MAGIC) < 55) or (not Inventory.Items.Contains('Nature rune')) then
+  begin
+    Logger.Warn('High Level Alchemy requires 55 Magic and Nature runes; rotating block.');
+    Self.ChooseNextActivityBlock(False);
+    Exit;
+  end;
+
+  for candidate in Self.AlchTargets do
+    if Inventory.Items.Contains(candidate) then
+    begin
+      targetItem := candidate;
+      foundTarget := True;
+      Break;
+    end;
+
+  if not foundTarget then
+  begin
+    Logger.Info('No alch target items left in inventory; rotating to next block.');
+    Self.ChooseNextActivityBlock(False);
+    Exit;
+  end;
+
+  Human.ReactDelay(160, 540);
+  if Magic.Cast(ESpell.HIGH_LEVEL_ALCHEMY) then
+  begin
+    Human.ReactDelay(140, 480);
+    if Inventory.Items.Click(targetItem) then
+    begin
+      if XPBar.WaitXP(6 * TICK) then
+        Inc(Self.Actions);
+      Biometrics.Sleep(240, 820, ERandomDir.LEFT);
+    end;
+  end;
+end;
+
+function TMasterDirector.GetState(): EDirectorState;
+var
+  usedSlots: Integer;
+begin
+  if Activity.IsFinished then
+    Exit(EDirectorState.NO_ACTIVITY);
+
+  if (Self.MaxActions > 0) and (Self.Actions >= Self.MaxActions) then
+    Exit(EDirectorState.MAX_ACTIONS);
+
+  if (Self.MaxTime > 0) and (Logger.TimeRunning.Elapsed >= Self.MaxTime) then
+    Exit(EDirectorState.MAX_TIME);
+
+  if Self.LevelGoals and Stats.AnyGoalsCompleted() then
+    Exit(EDirectorState.MAX_LEVEL);
+
+  if not Client.IsLoggedIn() then
+    Exit(EDirectorState.LOGIN);
+
+  if Chat.LeveledUp() then
+    Exit(EDirectorState.LEVEL_UP);
+
+  if Self.BlockTimer.IsFinished then
+    Exit(EDirectorState.ROTATE_ACTIVITY_BLOCK);
+
+  if Bank.IsOpen() then
+  begin
+    if Inventory.Items.ContainsDifferent(Self.KeepTools) then
+      Exit(EDirectorState.DEPOSIT_ITEMS);
+    Self.NeedsCleanBankTransition := False;
+    Exit(EDirectorState.CLOSE_INTERFACE);
+  end;
+
+  // Cleanly bank leftover items when transitioning between major skill blocks
+  // Skip when entering BLOCK_BANKSTAND_PROCESS so uncut gems/logs aren't deposited right before bankstanding processes them
+  if (Self.CurrentBlock <> EDirectorBlock.BLOCK_BANKSTAND_PROCESS) and
+     Self.NeedsCleanBankTransition and Inventory.Items.ContainsDifferent(Self.KeepTools) then
+    Exit(EDirectorState.OPEN_BANK);
+  if Self.CurrentBlock <> EDirectorBlock.BLOCK_BANKSTAND_PROCESS then
+    Self.NeedsCleanBankTransition := False;
+
+  case Self.CurrentBlock of
+    EDirectorBlock.BLOCK_BANKSTAND_PROCESS:
+      Exit(EDirectorState.BANKSTAND_WORK);
+
+    EDirectorBlock.BLOCK_HIGH_ALCHEMY:
+      Exit(EDirectorState.CAST_HIGH_ALCH);
+
+    EDirectorBlock.BLOCK_WOODCUT_AND_FLETCH:
+      begin
+        usedSlots := Inventory.Slots.Count();
+        if usedSlots >= Human.InventoryLimit then
+        begin
+          if Self.SubModeBank then
+            Exit(EDirectorState.OPEN_BANK)
+          else if Inventory.Items.Contains('Knife') and Inventory.Items.Contains(Self.CurrentLogItem) and RandomBoolean(0.55) then
+            Exit(EDirectorState.WOODCUT_FLETCH)
+          else if Inventory.Items.Contains('Tinderbox') and Inventory.Items.Contains(Self.CurrentLogItem) and RandomBoolean(0.40) then
+            Exit(EDirectorState.WOODCUT_BURN)
+          else
+            Exit(EDirectorState.DROP_ITEMS);
+        end;
+
+        if Self.UseSpec and (not Minimap.SpecialEnabled()) and Minimap.HasSpecial() and (Minimap.GetSpecLevel() = 100) then
+          Exit(EDirectorState.USE_SPEC);
+
+        Exit(EDirectorState.WOODCUT_CHOP);
+      end;
+
+    EDirectorBlock.BLOCK_MINING_AND_GEMS:
+      begin
+        usedSlots := Inventory.Slots.Count();
+        if usedSlots >= Human.InventoryLimit then
+        begin
+          if Self.SubModeBank then
+            Exit(EDirectorState.OPEN_BANK)
+          else
+            Exit(EDirectorState.DROP_ITEMS);
+        end;
+
+        if Self.UseSpec and (not Minimap.SpecialEnabled()) and Minimap.HasSpecial() and (Minimap.GetSpecLevel() = 100) then
+          Exit(EDirectorState.USE_SPEC);
+
+        Exit(EDirectorState.MINING_MINE);
+      end;
+  end;
+
+  Result := EDirectorState.WOODCUT_CHOP;
+end;
+
+function TMasterDirector.CheckCrowdAndHop(maxPlayersAllowed: Integer = 3): Boolean;
+begin
+  if (Profiles = []) or (not InRange(ProfileIndex, 0, High(Profiles))) or
+     (Length(Profiles[ProfileIndex].Worlds) <= 1) then
+    Exit(False);
+  Result := Human.CheckCrowdAndHop(maxPlayersAllowed);
+end;
+
+procedure TMasterDirector.Run();
+var
+  state: EDirectorState;
+begin
+  Self.Init();
+
+  repeat
+    state := Self.GetState();
+    Logger.Info('Director: ' + ToStr(Self.CurrentBlock) + ' -> ' + ToStr(state) +
+                ' | Attention: ' + ToStr(Human.Attention));
+    Human.SyncSwarm('Master Director', ToStr(Self.CurrentBlock).After('EDirectorBlock.') + ' -> ' + ToStr(state).After('EDirectorState.'), Self.Actions);
+    if Self.CurrentBlock = EDirectorBlock.BLOCK_MINING_AND_GEMS then
+      Human.CheckAndReplyChat('mining')
+    else
+      Human.CheckAndReplyChat('woodcutting');
+    ProgressReport.Print();
+
+    case state of
+      EDirectorState.LOGIN:
+        Login.DoLogin();
+
+      EDirectorState.LEVEL_UP:
+        begin
+          Human.ReactDelay(350, 1200);
+          Chat.HandleLevelUp();
+        end;
+
+      EDirectorState.CLOSE_INTERFACE:
+        begin
+          Human.ReactDelay(200, 600);
+          MSInterface.Close();
+        end;
+
+      EDirectorState.ROTATE_ACTIVITY_BLOCK:
+        Self.ChooseNextActivityBlock(False);
+
+      EDirectorState.OPEN_BANK:
+        Human.OpenBank();
+
+      EDirectorState.DEPOSIT_ITEMS:
+        if Human.DepositItems(Self.KeepTools) then
+        begin
+          Self.NeedsCleanBankTransition := False;
+          Self.SubModeBank := RandomBoolean(0.65);
+          Human.RollInventoryLimit();
+          if RandomBoolean(0.65) then
+            Bank.Close();
+        end;
+
+      EDirectorState.WOODCUT_CHOP:
+        begin
+          Self.CheckCrowdAndHop(3);
+          Human.ReactDelay(180, 620);
+          if Human.WalkClickAny(Self.TreeObjs) then
+          begin
+            Minimap.WaitMoving();
+            Self.WaitWoodcutting();
+          end
+          else
+            Biometrics.Sleep(600, 1500, ERandomDir.LEFT);
+        end;
+
+      EDirectorState.WOODCUT_FLETCH:
+        Self.DoFletchInventory();
+
+      EDirectorState.WOODCUT_BURN:
+        Self.DoBurnBatch();
+
+      EDirectorState.MINING_MINE:
+        begin
+          Self.CheckCrowdAndHop(3);
+          Human.ReactDelay(160, 540);
+          if Human.WalkClickAny(Self.RockObjs) then
+          begin
+            Minimap.WaitMoving();
+            Self.WaitMiningVein();
+          end
+          else
+            Biometrics.Sleep(500, 1400, ERandomDir.LEFT);
+        end;
+
+      EDirectorState.DROP_ITEMS:
+        begin
+          Human.HumanizedDrop(Self.DroppableItems);
+          Self.SubModeBank := RandomBoolean(0.60);
+        end;
+
+      EDirectorState.BANKSTAND_WORK:
+        Self.DoBankstandProcess();
+
+      EDirectorState.CAST_HIGH_ALCH:
+        Self.DoHighAlchemy();
+
+      EDirectorState.USE_SPEC:
+        begin
+          Human.ReactDelay(250, 800);
+          Minimap.EnableSpecial(100);
+        end;
+
+      EDirectorState.NO_ACTIVITY, EDirectorState.MAX_ACTIONS,
+      EDirectorState.MAX_TIME, EDirectorState.MAX_LEVEL,
+      EDirectorState.END_SCRIPT:
+        Break;
+    end;
+
+    Antiban.DoAntiban();
+  until False;
+
+  Logger.Info('Master Account Director session complete. Stay human!');
+end;
+
+procedure TScriptForm.OnStart(sender: TLazObject); override;
+begin
+  inherited();
+
+  Director.Region          := EDirectorRegion(HubCombo.ItemIndex);
+  Director.EnableWoodcut   := WcBlockCheck.Checked;
+  Director.EnableMining    := MineBlockCheck.Checked;
+  Director.EnableBankstand := BankBlockCheck.Checked;
+  Director.EnableAlch      := AlchBlockCheck.Checked;
+  Director.UseSpec         := DirSpecCheck.Checked;
+  Director.AlchItemName    := AlchItemEdit.Text;
+
+  if DirectorConfig.Data.Assert('region', EJSONType.INT) then
+    DirectorConfig.Data.Item['region'].AsInt := HubCombo.ItemIndex
+  else
+    DirectorConfig.Data.AddInt('region', HubCombo.ItemIndex);
+
+  if DirectorConfig.Data.Assert('enable_wc', EJSONType.BOOL) then
+    DirectorConfig.Data.Item['enable_wc'].AsBool := Director.EnableWoodcut
+  else
+    DirectorConfig.Data.AddBool('enable_wc', Director.EnableWoodcut);
+
+  if DirectorConfig.Data.Assert('enable_mine', EJSONType.BOOL) then
+    DirectorConfig.Data.Item['enable_mine'].AsBool := Director.EnableMining
+  else
+    DirectorConfig.Data.AddBool('enable_mine', Director.EnableMining);
+
+  if DirectorConfig.Data.Assert('enable_bankstand', EJSONType.BOOL) then
+    DirectorConfig.Data.Item['enable_bankstand'].AsBool := Director.EnableBankstand
+  else
+    DirectorConfig.Data.AddBool('enable_bankstand', Director.EnableBankstand);
+
+  if DirectorConfig.Data.Assert('enable_alch', EJSONType.BOOL) then
+    DirectorConfig.Data.Item['enable_alch'].AsBool := Director.EnableAlch
+  else
+    DirectorConfig.Data.AddBool('enable_alch', Director.EnableAlch);
+
+  if DirectorConfig.Data.Assert('use_spec', EJSONType.BOOL) then
+    DirectorConfig.Data.Item['use_spec'].AsBool := Director.UseSpec
+  else
+    DirectorConfig.Data.AddBool('use_spec', Director.UseSpec);
+
+  if DirectorConfig.Data.Assert('alch_item', EJSONType.STR) then
+    DirectorConfig.Data.Item['alch_item'].AsString := Director.AlchItemName
+  else
+    DirectorConfig.Data.AddString('alch_item', Director.AlchItemName);
+
+  DirectorConfig.Save();
+end;
+
+procedure TScriptForm.Init();
+var
+  tab: TLazTabSheet;
+  panel: TLazPanel;
+begin
+  DirectorConfig.Setup('scripts' + PATH_SEP + 'master-account-director');
+  Self.Setup('Master Account Director (Multi-Skill Rotator)', DirectorConfig.Data);
+
+  tab := Self.CreateTab('Director Schedule');
+  GoalsForm.Actions := @Director.MaxActions;
+  GoalsForm.Time    := @Director.MaxTime;
+  GoalsForm.Stats   := @Director.LevelGoals;
+  panel := GoalsForm.Create(tab, True, True, True, EOrientation.HORIZONTAL);
+  panel.Align := ELazAlign.Bottom;
+
+  HubCombo := TLazComboBox.CreateEx(tab, 'Multi-Skill Region Hub:', 'Select region hub containing trees, rocks, and banks', 24, 28, 250, 28);
+  HubCombo.Items.AddStrings([
+    'Varrock Hub (Trees + East/West Mines + Banks)',
+    'Draynor & Lumbridge Hub (Willows/Oaks + Swamp Mine)',
+    'Falador & Mining Guild Hub (Trees + Guild + Banks)',
+    'Seers'' Village Hub (Maples/Yews/Oaks + Bank)',
+    'Edgeville Hub (Yews/Trees + Bank)',
+    'Al Kharid Hub (Mine + Bank)'
+  ]);
+  if DirectorConfig.Data.Assert('region', EJSONType.INT) then
+    HubCombo.ItemIndex := DirectorConfig.Data.Item['region'].AsInt
+  else
+    HubCombo.ItemIndex := 0;
+
+  WcBlockCheck := TLazCheckBox.CreateEx(tab, 'Enable Woodcutting + Fletching / Firemaking Block', 'Chops progressive trees, loots nests, fletches/burns/banks', 24, 90);
+  if DirectorConfig.Data.Assert('enable_wc', EJSONType.BOOL) then
+    WcBlockCheck.Checked := DirectorConfig.Data.Item['enable_wc'].AsBool
+  else
+    WcBlockCheck.Checked := True;
+
+  MineBlockCheck := TLazCheckBox.CreateEx(tab, 'Enable Mining + Uncut Gem Preservation Block', 'Mines progressive rocks, keeps gems, rotates bank/drop', 24, 122);
+  if DirectorConfig.Data.Assert('enable_mine', EJSONType.BOOL) then
+    MineBlockCheck.Checked := DirectorConfig.Data.Item['enable_mine'].AsBool
+  else
+    MineBlockCheck.Checked := True;
+
+  BankBlockCheck := TLazCheckBox.CreateEx(tab, 'Enable Bankstanding Gem Cutting / Fletching Block', 'Processes uncut gems or logs at randomized bank booths', 24, 154);
+  if DirectorConfig.Data.Assert('enable_bankstand', EJSONType.BOOL) then
+    BankBlockCheck.Checked := DirectorConfig.Data.Item['enable_bankstand'].AsBool
+  else
+    BankBlockCheck.Checked := True;
+
+  AlchBlockCheck := TLazCheckBox.CreateEx(tab, 'Enable High Level Alchemy Block (Requires 55 Magic + Nature Runes)', 'Casts High Level Alchemy on target item in inventory', 24, 186);
+  if DirectorConfig.Data.Assert('enable_alch', EJSONType.BOOL) then
+    AlchBlockCheck.Checked := DirectorConfig.Data.Item['enable_alch'].AsBool
+  else
+    AlchBlockCheck.Checked := False;
+
+  AlchItemEdit := TLazEdit.CreateEx(tab, 'Custom High Alch Item Name (Optional):', 'e.g. Yew longbow, Maple longbow, Green d''hide body', 24, 222, 240, 26);
+  if DirectorConfig.Data.Assert('alch_item', EJSONType.STR) then
+    AlchItemEdit.Text := DirectorConfig.Data.Item['alch_item'].AsString
+  else
+    AlchItemEdit.Text := 'Maple longbow';
+
+  DirSpecCheck := TLazCheckBox.CreateEx(tab, 'Use Tool Special Attacks (Dragon / Infernal / Crystal)', 'Activates special attack when at 100%', 310, 226);
+  if DirectorConfig.Data.Assert('use_spec', EJSONType.BOOL) then
+    DirSpecCheck.Checked := DirectorConfig.Data.Item['use_spec'].AsBool
+  else
+    DirSpecCheck.Checked := True;
+
+  Self.CreateAntibanTab();
+  Self.CreateMiscTab();
+  Self.Run();
+end;
+
+begin
+  {$IFNDEF SIMBAHEADLESS}
+  DirectorForm.Init();
+  {$ENDIF}
+  Director.Run();
+end.

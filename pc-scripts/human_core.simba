@@ -1,0 +1,1642 @@
+(*
+# HumanCore v5 (Markov-Chain Human Telemetry, Anti-Clustering, World Navigation, Auto-Gear, RSN Generator, Guarded Chat/LLM & Swarm Bridge)
+Designed from first principles for Simba 2.0 + WaspLib to defeat behavioral profiling:
+  1. Per-account Biometric WindMouse + non-stationary session fatigue drift + TMouse.Move Arc/Dwell Override
+  2. 3-State Markov Attention Model (FOCUSED, CASUAL, SECOND_MONITOR)
+  3. Anti-Slot-28 Invariant & Imperfect Shift-Dropping
+  4. Multi-ID Cache Object Loader & Non-Deterministic Object Selection
+  5. Multi-Booth Bank Selection & Humanized Deposit/Withdraw
+  6. Bird Nest / Ground Item Projection & Pickup
+  7. Nearby Player Crowd / Crasher Detection & World-Hopping
+  8. 4-Tiered Circadian Login Gaps + Post-Login Orientation Ritual
+  9. Connected Mainland Super-Map + Level-Aware Teleport Router (Tabs, Spells, Home Tele)
+ 10. Closed Door/Gate Obstacle Recovery & Stamina/Energy Potion Management
+ 11. Level-Aware Bank Tool & Gear Provisioner (Auto-withdraws best Axe/Pickaxe/Knife/Chisel)
+ 12. Endless Human RSN Generator & Organic Taken-Name Mutator (6 Human Naming Archetypes, <= 12 chars)
+ 13. Guarded Public Chat Slang & Local/Cloud LLM Responder (Anti-Bait Cooldowns & Typing Latency)
+ 14. Live Swarm Telemetry, Mini-Screen Streamer & Mobile PWA Command Receiver
+*)
+
+{$DEFINE WL_HUMANCORE_INCLUDED}
+{$INCLUDE_ONCE WaspLib/main.simba}
+
+function RandomRange(min, max: Double): Double;
+begin
+  Result := min + Random() * (max - min);
+end;
+
+function RandomRange(min, max: Int64): Int64; overload;
+begin
+  Result := Random(min, max);
+end;
+
+function Chr(b: Int32): Char;
+begin
+  Result := Char(b);
+end;
+
+type
+  EAttentionState = enum(
+    FOCUSED,        // Hand on mouse, eyes on screen: crisp reaction, occasional pre-hover
+    CASUAL,         // Relaxed play: 2-6 tick reaction delay, occasional camera/tab glance
+    SECOND_MONITOR  // Watching video/Discord: 3-12s lag when action finishes + LoseFocus
+  );
+
+  THumanCore = record
+    BaseSpeed, BaseGravity, BaseWind: Double;
+    BasePressMin, BasePressMax: Integer;
+    Attention: EAttentionState;
+    AttentionTimer: TCountDown;
+    SessionTimer: TStopwatch;
+    HomeTeleCooldown: TCountDown;
+    ChatCheckTimer: TCountDown;
+    ChatReplyCooldown: TCountDown;
+    SwarmSyncTimer: TCountDown;
+    SwarmScreenshotTimer: TCountDown;
+    InventoryLimit: Integer;
+    LastInvCount: Integer;
+    LastSwarmState: String;
+    CrowdedStrikes: Integer;
+    ChatRepliesCount: Integer;
+    ChatEnabled, UseLLMChat: Boolean;
+    LastSeenChatLine: String;
+    CachedDisplayName, BotID: String;
+    DoorObjs: TObjectArray;
+    DoorsLoaded: Boolean;
+    SafeBreakCallback: procedure() of object;
+    LastClickedCoord: TPoint;
+  end;
+
+var
+  Human: THumanCore;
+
+(*
+## Human.UpdateMousePhysics
+Applies the player's unique biometric seed plus subtle session fatigue drift
+so mouse velocity, wind, gravity, click hold time, and miss rate shift organically.
+*)
+procedure THumanCore.UpdateMousePhysics();
+var
+  fatigueHours, fatigueFactor: Double;
+begin
+  fatigueHours := Self.SessionTimer.Elapsed / HOUR;
+  fatigueFactor := Min(0.14, fatigueHours * 0.038);
+
+  Mouse.Speed    := Max(8.5, GaussRand(Self.BaseSpeed * (1.0 - fatigueFactor), 0.65));
+  Mouse.Gravity  := Max(7.0, GaussRand(Self.BaseGravity, 0.45));
+  Mouse.Wind     := Max(3.0, GaussRand(Self.BaseWind * (1.0 + fatigueFactor * 0.5), 0.40));
+
+  Mouse.PressMin := Max(35, Round(GaussRand(Self.BasePressMin, 4)));
+  Mouse.PressMax := Max(Mouse.PressMin + 25, Round(GaussRand(Self.BasePressMax * (1.0 + fatigueFactor), 8)));
+
+  Keyboard.PressMin := Max(25, Round(GaussRand(Self.BasePressMin, 4)));
+  Keyboard.PressMax := Max(Keyboard.PressMin + 20, Round(GaussRand(Self.BasePressMax * (1.0 + fatigueFactor), 8)));
+
+  if RandomBoolean(0.75) then
+    Mouse.Distribution := EMouseDistribution.ROWP
+  else
+    Mouse.Distribution := EMouseDistribution.SKEWED;
+end;
+
+(*
+## TMouse.Move Override (Biomechanical Arc + Pre-Click Stabilization Dwell)
+CRITICAL ANTI-CHEAT FIX:
+In stock WaspLib (`mouse.simba` lines 520 & 598), `Mouse.Move(dest)` calls
+Simba's built-in C `WindMouse` (`Target.MouseMove`) and then `Mouse.Click` fires
+`Target.MouseClick` on the VERY NEXT CPU INSTRUCTION (0.0ms dwell time between
+cursor arrival and MouseDown).
+Real human hands decelerate onto a target and stabilize for 18-85ms before the
+index finger actuates the switch, and pivot from the wrist in a slight arc on
+medium/long movements.
+Overriding `TMouse.Move(destination: TPoint)` fixes this globally across EVERY
+interface in WaspLib (Inventory, Bank, Walker, MainScreen, Magic, ChooseOption).
+*)
+procedure TMouse.Move(destination: TPoint); override;
+var
+  startPt, midPt: TPoint;
+  dist, arcOffset, perpX, perpY, origSpeed: Double;
+  w, h: Integer;
+  savedCanIdle: Boolean;
+begin
+  if Self.UseTeleport then
+  begin
+    inherited(destination);
+    Exit;
+  end;
+
+  startPt := Target.MouseXY;
+  dist := startPt.DistanceTo(destination);
+
+  w := Target.Width;
+  h := Target.Height;
+
+  if (w > 0) and (h > 0) and Self.CanIdle and (Self.IdleInterval > 0) then
+  begin
+    if Self.IdleProgress = 0 then
+      Self.IdleGoal := GaussRand(Self.IdleInterval, Self.IdleInterval * 0.20)
+    else if Self.IdleProgress > Self.IdleGoal then
+    begin
+      Self.Idle();
+      Self.IdleProgress := 0;
+
+      if RandomBoolean(0.1) then
+        Self.IdleGoal := GaussRand(Self.IdleInterval / 2, Self.IdleInterval / 2 * 0.20)
+      else
+        Self.IdleGoal := GaussRand(Self.IdleInterval, Self.IdleInterval * 0.20);
+    end;
+
+    Self.IdleProgress += dist / Hypot(w, h);
+  end;
+
+  // For medium/long movements (> 135px), inject a natural wrist-pivot arc waypoint
+  // so trajectories don't follow stock WindMouse's straight-line gravity vector
+  if (dist > 135) and RandomBoolean(0.68) then
+  begin
+    perpX := -(destination.Y - startPt.Y) / dist;
+    perpY :=  (destination.X - startPt.X) / dist;
+    arcOffset := GaussRand(0, dist * 0.065);
+    if Abs(arcOffset) > 4 then
+    begin
+      midPt.X := Round(startPt.X + (destination.X - startPt.X) * RandomRange(0.45, 0.62) + perpX * arcOffset);
+      midPt.Y := Round(startPt.Y + (destination.Y - startPt.Y) * RandomRange(0.45, 0.62) + perpY * arcOffset);
+
+      // Clamp midPt to Target.Bounds
+      midPt.X := Max(Target.Bounds.X1, Min(Target.Bounds.X2, midPt.X));
+      midPt.Y := Max(Target.Bounds.Y1, Min(Target.Bounds.Y2, midPt.Y));
+
+      origSpeed := Self.Speed;
+      Self.Speed := origSpeed * RandomRange(1.08, 1.22); // Faster ballistic phase
+      Target.MouseMove(midPt);
+      Self.Speed := origSpeed;
+    end;
+  end;
+
+  savedCanIdle := Self.CanIdle;
+  Self.CanIdle := False;
+  try
+    inherited(destination);
+  finally
+    Self.CanIdle := savedCanIdle;
+  end;
+
+  // Human Pre-Click Stabilization Dwell: eliminates the 0ms Move->MouseDown bot flag
+  if dist > 6 then
+    Sleep(Biometrics.RandomModeInteger(28, 14, 78));
+end;
+
+(*
+## Human.RollInventoryLimit
+Defeats the "Slot-28 Bot Invariant". Real players usually wait until 28 items,
+but ~26% of the time if a tree/rock depletes at 25-27 items, they go ahead and
+bank, fletch, or drop instead of finding another node for 1-2 items.
+*)
+function THumanCore.RollInventoryLimit(): Integer;
+begin
+  if RandomBoolean(0.74) then
+    Self.InventoryLimit := 28
+  else
+    Self.InventoryLimit := Biometrics.RandomModeInteger(27, 25, 28);
+  Result := Self.InventoryLimit;
+end;
+
+(*
+## Human.RollAttentionState
+Markov transition between FOCUSED, CASUAL, and SECOND_MONITOR attention states.
+*)
+procedure THumanCore.RollAttentionState();
+var
+  roll: Double;
+begin
+  if not Self.AttentionTimer.IsFinished then
+    Exit;
+
+  roll := Random();
+  case Self.Attention of
+    EAttentionState.FOCUSED:
+      if roll < 0.50 then
+        Self.Attention := EAttentionState.CASUAL
+      else if roll < 0.70 then
+        Self.Attention := EAttentionState.SECOND_MONITOR;
+
+    EAttentionState.CASUAL:
+      if roll < 0.40 then
+        Self.Attention := EAttentionState.FOCUSED
+      else if roll < 0.68 then
+        Self.Attention := EAttentionState.SECOND_MONITOR;
+
+    EAttentionState.SECOND_MONITOR:
+      if roll < 0.55 then
+        Self.Attention := EAttentionState.CASUAL
+      else if roll < 0.85 then
+        Self.Attention := EAttentionState.FOCUSED;
+  end;
+
+  case Self.Attention of
+    EAttentionState.FOCUSED:        Self.AttentionTimer.Start(RandomLeft(3 * MINUTE, 9 * MINUTE));
+    EAttentionState.CASUAL:         Self.AttentionTimer.Start(RandomLeft(4 * MINUTE, 12 * MINUTE));
+    EAttentionState.SECOND_MONITOR: Self.AttentionTimer.Start(RandomLeft(2 * MINUTE, 6 * MINUTE));
+  end;
+
+  Self.UpdateMousePhysics();
+end;
+
+(*
+## Human.ReactDelay
+Used for immediate UI/action transitions (e.g., bank opened, make menu appeared).
+*)
+procedure THumanCore.ReactDelay(fastMin: UInt32 = 190; fastMax: UInt32 = 640);
+begin
+  Self.RollAttentionState();
+
+  case Self.Attention of
+    EAttentionState.FOCUSED:
+      Biometrics.Sleep(fastMin, fastMax, ERandomDir.LEFT);
+
+    EAttentionState.CASUAL:
+      Biometrics.Sleep(fastMax, fastMax * 2 + 400, ERandomDir.LEFT);
+
+    EAttentionState.SECOND_MONITOR:
+      Biometrics.Sleep(900, 3400, ERandomDir.LEFT);
+  end;
+end;
+
+(*
+## Human.ActionFinishDelay
+Used when an asynchronous gathering/skilling action finishes (e.g., tree felled,
+rock mined, inventory finished fletching). Models real human recognition latency.
+*)
+procedure THumanCore.ActionFinishDelay();
+begin
+  Self.RollAttentionState();
+
+  case Self.Attention of
+    EAttentionState.FOCUSED:
+      Biometrics.Sleep(180, 680, ERandomDir.LEFT);
+
+    EAttentionState.CASUAL:
+      begin
+        if RandomBoolean(0.20) then
+          Antiban.SmallRandomMouse();
+        Biometrics.Sleep(650, 2800, ERandomDir.LEFT);
+      end;
+
+    EAttentionState.SECOND_MONITOR:
+      begin
+        if RandomBoolean(0.40) then
+          Client.LoseFocus();
+        Biometrics.Sleep(1800, 8200, ERandomDir.LEFT);
+      end;
+  end;
+end;
+
+(*
+## Human.PostLoginRitual
+Real players don't sprint to a tree within 200ms of logging in. Performs a brief
+orientation pause and occasional camera/tab check after logging in.
+*)
+procedure THumanCore.PostLoginRitual();
+begin
+  Biometrics.Sleep(650, 2400, ERandomDir.LEFT);
+  if RandomBoolean(0.35) then
+    Antiban.SmallCameraRotation();
+  if RandomBoolean(0.20) then
+    Inventory.Open();
+end;
+
+(*
+## Human.LoadObjectsByName / LoadObjectsByAction
+Loads all OSRS cache object ID variants matching `name` or `action` into a
+`TObjectArray` so multi-model trees, rocks, ranges, and furnaces are all found.
+*)
+function THumanCore.LoadObjectsByName(name: String): TObjectArray;
+var
+  data: TMapObjectDataArray;
+begin
+  data := MapObjects.GetByName(name);
+  if data <> [] then
+    Result := TObjectArray.Create(Map.Walker, data);
+end;
+
+function THumanCore.LoadObjectsByAction(action: String): TObjectArray;
+var
+  data: TMapObjectDataArray;
+begin
+  data := MapObjects.GetByAction(action);
+  if data <> [] then
+    Result := TObjectArray.Create(Map.Walker, data);
+end;
+
+(*
+## Human.CheckRunAndStamina
+Checks run energy and drinks a Stamina or Energy potion if present in the
+inventory when energy dips below a humanized threshold.
+*)
+procedure THumanCore.CheckRunAndStamina();
+var
+  potions: TItemArray;
+  pot: TItem;
+begin
+  if Minimap.GetRunEnergy() <= Biometrics.RandomModeInteger(38, 22, 55) then
+  begin
+    potions := [
+      'Stamina potion(4)', 'Stamina potion(3)', 'Stamina potion(2)', 'Stamina potion(1)',
+      'Super energy(4)', 'Super energy(3)', 'Super energy(2)', 'Super energy(1)',
+      'Energy potion(4)', 'Energy potion(3)', 'Energy potion(2)', 'Energy potion(1)'
+    ];
+    for pot in potions do
+      if Inventory.Items.Contains(pot) then
+      begin
+        Self.ReactDelay(180, 520);
+        Inventory.Items.Click(pot);
+        Break;
+      end;
+  end;
+end;
+
+(*
+## Human.TryTeleportNear
+Knows OSRS teleport tablets, standard spellbook teleports (and their exact Magic
+level + Law rune requirements), and Home Teleport. If `dest` is far away (> 260
+map pixels / ~65 tiles), checks if a teleport can jump the player directly to
+the destination city hub!
+*)
+function THumanCore.TryTeleportNear(dest: TPoint): Boolean;
+var
+  me, destChunk: TPoint;
+  dist: Double;
+  magicLvl: Integer;
+  hasLaws: Boolean;
+begin
+  me := Map.Position();
+  dist := me.DistanceTo(dest);
+  if dist < 260 then
+    Exit(False);
+
+  destChunk := RSTranslator.Global2Chunk(dest);
+
+  // 1. Check Teleport Tablets in Inventory (Require 0 Magic Level!)
+  if InRange(destChunk.X, 48, 51) and InRange(destChunk.Y, 52, 55) then
+  begin
+    if Inventory.Items.Contains('Varrock teleport') then
+    begin
+      Logger.Info('Using Varrock teleport tablet to reach destination faster.');
+      Self.ReactDelay(250, 750);
+      if Inventory.Items.Interact('Varrock teleport', 'Break') then
+      begin
+        Biometrics.Sleep(2600, 3800, ERandomDir.LEFT);
+        Exit(True);
+      end;
+    end;
+  end
+  else if InRange(destChunk.X, 45, 47) and InRange(destChunk.Y, 51, 53) then
+  begin
+    if Inventory.Items.Contains('Falador teleport') then
+    begin
+      Logger.Info('Using Falador teleport tablet to reach destination faster.');
+      Self.ReactDelay(250, 750);
+      if Inventory.Items.Interact('Falador teleport', 'Break') then
+      begin
+        Biometrics.Sleep(2600, 3800, ERandomDir.LEFT);
+        Exit(True);
+      end;
+    end;
+  end
+  else if InRange(destChunk.X, 47, 52) and InRange(destChunk.Y, 48, 51) then
+  begin
+    if Inventory.Items.Contains('Lumbridge teleport') then
+    begin
+      Logger.Info('Using Lumbridge teleport tablet to reach destination faster.');
+      Self.ReactDelay(250, 750);
+      if Inventory.Items.Interact('Lumbridge teleport', 'Break') then
+      begin
+        Biometrics.Sleep(2600, 3800, ERandomDir.LEFT);
+        Exit(True);
+      end;
+    end;
+  end
+  else if InRange(destChunk.X, 41, 44) and InRange(destChunk.Y, 53, 55) then
+  begin
+    if Inventory.Items.Contains('Camelot teleport') then
+    begin
+      Logger.Info('Using Camelot teleport tablet to reach destination faster.');
+      Self.ReactDelay(250, 750);
+      if Inventory.Items.Interact('Camelot teleport', 'Break') then
+      begin
+        Biometrics.Sleep(2600, 3800, ERandomDir.LEFT);
+        Exit(True);
+      end;
+    end;
+  end;
+
+  // 2. Check Spellbook Teleports (Verify Magic Level & Law Rune)
+  hasLaws := Inventory.Items.Contains('Law rune');
+  if hasLaws then
+  begin
+    magicLvl := Stats.GetLevel(ESkill.MAGIC);
+
+    // Varrock Hub (Level 25 Magic)
+    if InRange(destChunk.X, 48, 51) and InRange(destChunk.Y, 52, 55) and (magicLvl >= 25) then
+    begin
+      Logger.Info('Casting Varrock Teleport (Magic level ' + ToStr(magicLvl) + ').');
+      Self.ReactDelay(250, 750);
+      if Magic.Cast(ESpell.VARROCK_TELEPORT) then
+      begin
+        Biometrics.Sleep(2600, 3800, ERandomDir.LEFT);
+        Exit(True);
+      end;
+    end
+    // Lumbridge / Draynor / Al Kharid Hub (Level 31 Magic)
+    else if InRange(destChunk.X, 47, 52) and InRange(destChunk.Y, 48, 51) and (magicLvl >= 31) then
+    begin
+      Logger.Info('Casting Lumbridge Teleport (Magic level ' + ToStr(magicLvl) + ').');
+      Self.ReactDelay(250, 750);
+      if Magic.Cast(ESpell.LUMBRIDGE_TELEPORT) then
+      begin
+        Biometrics.Sleep(2600, 3800, ERandomDir.LEFT);
+        Exit(True);
+      end;
+    end
+    // Falador Hub (Level 37 Magic)
+    else if InRange(destChunk.X, 45, 47) and InRange(destChunk.Y, 51, 53) and (magicLvl >= 37) then
+    begin
+      Logger.Info('Casting Falador Teleport (Magic level ' + ToStr(magicLvl) + ').');
+      Self.ReactDelay(250, 750);
+      if Magic.Cast(ESpell.FALADOR_TELEPORT) then
+      begin
+        Biometrics.Sleep(2600, 3800, ERandomDir.LEFT);
+        Exit(True);
+      end;
+    end
+    // Camelot / Seers Hub (Level 45 Magic)
+    else if InRange(destChunk.X, 41, 44) and InRange(destChunk.Y, 53, 55) and (magicLvl >= 45) then
+    begin
+      Logger.Info('Casting Camelot Teleport (Magic level ' + ToStr(magicLvl) + ').');
+      Self.ReactDelay(250, 750);
+      if Magic.Cast(ESpell.CAMELOT_TELEPORT) then
+      begin
+        Biometrics.Sleep(2600, 3800, ERandomDir.LEFT);
+        Exit(True);
+      end;
+    end;
+  end;
+
+  // 3. Lumbridge Home Teleport fallback (Requires Level 1 Magic & 0 Runes)
+  if InRange(destChunk.X, 47, 52) and InRange(destChunk.Y, 48, 51) and
+     (dist > 360) and Self.HomeTeleCooldown.IsFinished then
+  begin
+    Logger.Info('Casting Lumbridge Home Teleport to reach southern hub.');
+    Self.ReactDelay(300, 900);
+    if Magic.Cast(ESpell.LUMBRIDGE_HOME_TELEPORT) then
+    begin
+      Self.HomeTeleCooldown.Start(30 * MINUTE);
+      Biometrics.Sleep(14500, 16500, ERandomDir.LEFT);
+      Exit(True);
+    end;
+  end;
+end;
+
+(*
+## Human.TryOpenNearbyDoor
+WaspLib's `TWalker.WebWalk` does not open closed doors or gates on its own.
+If a walk or object click is blocked by a closed door/gate within ~7 tiles,
+this helper locates and opens it.
+*)
+function THumanCore.TryOpenNearbyDoor(): Boolean;
+var
+  me: TPoint;
+  idx: Integer;
+begin
+  if not Self.DoorsLoaded then
+  begin
+    Self.DoorObjs := Self.LoadObjectsByName('Door') +
+                     Self.LoadObjectsByName('Large door') +
+                     Self.LoadObjectsByName('Gate');
+    Self.DoorsLoaded := True;
+  end;
+
+  if Self.DoorObjs = [] then
+    Exit(False);
+
+  me := Map.Position();
+  idx := Self.DoorObjs.ClosestIndex(me);
+  if Self.DoorObjs[idx].DistanceTo(me) <= 28 then
+  begin
+    Logger.Info('Attempting to open nearby closed door/gate.');
+    Result := Self.DoorObjs[idx].Interact(['Open']);
+    if Result then
+      Minimap.WaitMoving();
+  end;
+end;
+
+(*
+## Human.WalkClickAny
+Clicks one of the closest objects in `objs`, adding slight human neighbor
+variance so the player doesn't always pick deterministic index 0 when multiple
+variants or spawns are similarly close. Automatically checks teleports if very
+far away and opens doors if blocked.
+*)
+function THumanCore.WalkClickAny(var objs: TObjectArray): Boolean;
+var
+  me, targetPt, chosenCoord, cPt: TPoint;
+  closestIdx, chosenIdx, i, j, chosenCoordIdx, cIdx: Integer;
+  closestDist, cDist: Double;
+  tmpObj: TObject;
+  candObjIndices, candCoordIndices: TIntegerArray;
+  candCoords: TPointArray;
+begin
+  if objs = [] then
+    Exit(False);
+
+  Self.CheckRunAndStamina();
+
+  me := Map.Position();
+  closestIdx := objs.ClosestIndex(me);
+  closestDist := objs[closestIdx].DistanceTo(me);
+
+  // If the target object is in another city (> 260 map pixels away), try teleporting first!
+  if (closestDist > 260) and (objs[closestIdx].Coordinates <> []) then
+  begin
+    targetPt := objs[closestIdx].Coordinates.NearestPoint(me);
+    if Self.TryTeleportNear(targetPt) then
+    begin
+      me := Map.Position();
+      closestIdx := objs.ClosestIndex(me);
+      closestDist := objs[closestIdx].DistanceTo(me);
+    end;
+  end;
+
+  candObjIndices := [];
+  candCoordIndices := [];
+  candCoords := [];
+
+  for i := 0 to High(objs) do
+  begin
+    if objs[i].Coordinates = [] then
+      Continue;
+    for j := 0 to High(objs[i].Coordinates) do
+    begin
+      cPt := objs[i].Coordinates[j];
+      cDist := cPt.DistanceTo(me);
+      if (cDist <= closestDist + 16) and (cPt <> Self.LastClickedCoord) then
+      begin
+        candObjIndices += i;
+        candCoordIndices += j;
+        candCoords += cPt;
+      end;
+    end;
+  end;
+
+  // Fallback if all coordinates matched LastClickedCoord or none found
+  if candCoords = [] then
+  begin
+    for i := 0 to High(objs) do
+    begin
+      if objs[i].Coordinates = [] then
+        Continue;
+      for j := 0 to High(objs[i].Coordinates) do
+      begin
+        cPt := objs[i].Coordinates[j];
+        if cPt.DistanceTo(me) <= closestDist + 16 then
+        begin
+          candObjIndices += i;
+          candCoordIndices += j;
+          candCoords += cPt;
+        end;
+      end;
+    end;
+  end;
+
+  if candCoords <> [] then
+  begin
+    cIdx := Random(0, High(candCoords));
+    chosenIdx := candObjIndices[cIdx];
+    chosenCoordIdx := candCoordIndices[cIdx];
+    chosenCoord := candCoords[cIdx];
+
+    Self.LastClickedCoord := chosenCoord;
+    tmpObj := objs[chosenIdx];
+    tmpObj.Coordinates := [chosenCoord];
+    if Length(tmpObj.Rotations) = Length(objs[chosenIdx].Coordinates) then
+      tmpObj.Rotations := [objs[chosenIdx].Rotations[chosenCoordIdx]]
+    else
+      tmpObj.Rotations := [];
+
+    Result := tmpObj.WalkClick();
+    if not Result then
+      if Self.TryOpenNearbyDoor() then
+        Result := tmpObj.WalkClick();
+  end
+  else
+  begin
+    chosenIdx := closestIdx;
+    Result := objs[chosenIdx].WalkClick();
+    if not Result then
+      if Self.TryOpenNearbyDoor() then
+        Result := objs[chosenIdx].WalkClick();
+  end;
+end;
+
+(*
+## Human.OpenBank
+Defeats the "Nearest Bank Booth Only" cluster: picks randomly among nearby
+bank booths within ~4 tiles of the nearest booth. Also checks teleports if far
+from a bank and opens doors if blocked.
+*)
+function THumanCore.OpenBank(): Boolean;
+var
+  me, bankPt, chosenCoord, cPt: TPoint;
+  closestDist, cDist: Double;
+  i, j, closestIdx, chosenIdx, chosenCoordIdx, cIdx: Int32;
+  tmpObj: TObject;
+  candObjIndices, candCoordIndices: TIntegerArray;
+  candCoords: TPointArray;
+begin
+  if Bank.IsOpen() then
+    Exit(True);
+
+  if Bank.Banks.IsEmpty and Bank.Bankers.IsEmpty then
+    Bank._SetupMapObjects();
+
+  Self.CheckRunAndStamina();
+  me := Map.Position();
+
+  if not Bank.Banks.IsEmpty then
+  begin
+    closestIdx := Bank.Banks.ClosestIndex(me);
+    closestDist := Bank.Banks[closestIdx].DistanceTo(me);
+
+    if (closestDist > 260) and (Bank.Banks[closestIdx].Coordinates <> []) then
+    begin
+      bankPt := Bank.Banks[closestIdx].Coordinates.NearestPoint(me);
+      if Self.TryTeleportNear(bankPt) then
+      begin
+        me := Map.Position();
+        closestIdx := Bank.Banks.ClosestIndex(me);
+        closestDist := Bank.Banks[closestIdx].DistanceTo(me);
+      end;
+    end;
+
+    candObjIndices := [];
+    candCoordIndices := [];
+    candCoords := [];
+
+    for i := 0 to High(Bank.Banks) do
+    begin
+      if Bank.Banks[i].Coordinates = [] then
+        Continue;
+      for j := 0 to High(Bank.Banks[i].Coordinates) do
+      begin
+        cPt := Bank.Banks[i].Coordinates[j];
+        cDist := cPt.DistanceTo(me);
+        if (cDist <= closestDist + 16) and (cPt <> Self.LastClickedCoord) then
+        begin
+          candObjIndices += i;
+          candCoordIndices += j;
+          candCoords += cPt;
+        end;
+      end;
+    end;
+
+    // Fallback if all matched LastClickedCoord
+    if candCoords = [] then
+    begin
+      for i := 0 to High(Bank.Banks) do
+      begin
+        if Bank.Banks[i].Coordinates = [] then
+          Continue;
+        for j := 0 to High(Bank.Banks[i].Coordinates) do
+        begin
+          cPt := Bank.Banks[i].Coordinates[j];
+          if cPt.DistanceTo(me) <= closestDist + 16 then
+          begin
+            candObjIndices += i;
+            candCoordIndices += j;
+            candCoords += cPt;
+          end;
+        end;
+      end;
+    end;
+
+    if candCoords <> [] then
+    begin
+      cIdx := Random(0, High(candCoords));
+      chosenIdx := candObjIndices[cIdx];
+      chosenCoordIdx := candCoordIndices[cIdx];
+      chosenCoord := candCoords[cIdx];
+
+      Self.LastClickedCoord := chosenCoord;
+      tmpObj := Bank.Banks[chosenIdx];
+      tmpObj.Coordinates := [chosenCoord];
+      if Length(tmpObj.Rotations) = Length(Bank.Banks[chosenIdx].Coordinates) then
+        tmpObj.Rotations := [Bank.Banks[chosenIdx].Rotations[chosenCoordIdx]]
+      else
+        tmpObj.Rotations := [];
+
+      if Bank.Open(tmpObj, True) then
+        Exit(True);
+    end;
+  end;
+
+  Result := Bank.Open(True);
+  if not Result then
+    if Self.TryOpenNearbyDoor() then
+      Result := Bank.Open(True);
+end;
+
+(*
+## Human.DepositItems
+Deposits items at the bank while preserving `keepItems` (such as axes, pickaxes,
+knives, tinderboxes).
+*)
+function THumanCore.DepositItems(keepItems: TItemArray): Boolean;
+begin
+  if not Bank.IsOpen() then
+    Exit(False);
+
+  Self.ReactDelay(220, 680);
+
+  if keepItems = [] then
+    Result := Bank.DepositInventory()
+  else if not Inventory.Items.ContainsAny(keepItems) then
+    Result := Bank.DepositInventory()
+  else
+    Result := Bank.DepositDifferent(keepItems, True);
+
+  if Result and RandomBoolean(0.18) then
+    Biometrics.Sleep(250, 950, ERandomDir.LEFT);
+
+  Activity.Restart();
+end;
+
+(*
+## Human.EnsureTools
+Level-aware bank gear provisioner!
+Checks if the player has a usable Axe and/or Pickaxe (plus optional Knife/Chisel)
+in their Inventory or Equipment. If missing, walks to the nearest bank, checks
+the player's live Woodcutting / Mining level, and withdraws the highest-tier tool
+their level unlocks!
+*)
+function THumanCore.EnsureTools(needAxe, needPickaxe: Boolean; needKnife: Boolean = False; needChisel: Boolean = False): Boolean;
+var
+  allAxes, allPicks, candidateAxes, candidatePicks: TItemArray;
+  hasAxe, hasPick: Boolean;
+  wcLvl, mineLvl: Integer;
+  tool: TItem;
+begin
+  allAxes := [
+    'Crystal axe', 'Infernal axe', 'Dragon axe', 'Rune axe', 'Adamant axe',
+    'Mithril axe', 'Black axe', 'Steel axe', 'Iron axe', 'Bronze axe',
+    'Crystal felling axe', 'Dragon felling axe', 'Rune felling axe',
+    'Adamant felling axe', 'Mithril felling axe', 'Black felling axe',
+    'Steel felling axe', 'Iron felling axe', 'Bronze felling axe'
+  ];
+
+  allPicks := [
+    'Crystal pickaxe', 'Infernal pickaxe', 'Dragon pickaxe', 'Rune pickaxe',
+    'Adamant pickaxe', 'Mithril pickaxe', 'Black pickaxe', 'Steel pickaxe',
+    'Iron pickaxe', 'Bronze pickaxe'
+  ];
+
+  hasAxe  := (not needAxe)     or Inventory.Items.ContainsAny(allAxes)  or Equipment.Items.ContainsAny(allAxes);
+  hasPick := (not needPickaxe) or Inventory.Items.ContainsAny(allPicks) or Equipment.Items.ContainsAny(allPicks);
+
+  if hasAxe and hasPick and
+     ((not needKnife)  or Inventory.Items.Contains('Knife')) and
+     ((not needChisel) or Inventory.Items.Contains('Chisel')) then
+  begin
+    Inventory.Open();
+    Exit(True);
+  end;
+
+  // Query skill levels BEFORE opening the bank to prevent tab-switching from closing the bank interface!
+  if not hasAxe then
+  begin
+    wcLvl := Stats.GetLevel(ESkill.WOODCUTTING);
+    if wcLvl >= 61 then candidateAxes += ['Dragon axe', 'Infernal axe', 'Crystal axe'];
+    if wcLvl >= 41 then candidateAxes += ['Rune axe'];
+    if wcLvl >= 31 then candidateAxes += ['Adamant axe'];
+    if wcLvl >= 21 then candidateAxes += ['Mithril axe'];
+    if wcLvl >= 11 then candidateAxes += ['Black axe'];
+    if wcLvl >= 6  then candidateAxes += ['Steel axe'];
+    candidateAxes += ['Iron axe', 'Bronze axe'];
+  end;
+
+  if not hasPick then
+  begin
+    mineLvl := Stats.GetLevel(ESkill.MINING);
+    if mineLvl >= 61 then candidatePicks += ['Dragon pickaxe', 'Infernal pickaxe', 'Crystal pickaxe'];
+    if mineLvl >= 41 then candidatePicks += ['Rune pickaxe'];
+    if mineLvl >= 31 then candidatePicks += ['Adamant pickaxe'];
+    if mineLvl >= 21 then candidatePicks += ['Mithril pickaxe'];
+    if mineLvl >= 11 then candidatePicks += ['Black pickaxe'];
+    if mineLvl >= 6  then candidatePicks += ['Steel pickaxe'];
+    candidatePicks += ['Iron pickaxe', 'Bronze pickaxe'];
+  end;
+
+  Logger.Info('Missing required skilling tool(s) in Inventory/Equipment -> Visiting Bank to provision gear...');
+  if not Self.OpenBank() then
+    Exit(False);
+
+  if not hasAxe then
+  begin
+    for tool in candidateAxes do
+      if Bank.Withdraw(tool, True, True) then
+      begin
+        Logger.Info('Withdrew best available axe for WC level ' + ToStr(wcLvl) + ': ' + ToStr(tool));
+        hasAxe := True;
+        Break;
+      end;
+  end;
+
+  if not hasPick then
+  begin
+    for tool in candidatePicks do
+      if Bank.Withdraw(tool, True, True) then
+      begin
+        Logger.Info('Withdrew best available pickaxe for Mining level ' + ToStr(mineLvl) + ': ' + ToStr(tool));
+        hasPick := True;
+        Break;
+      end;
+  end;
+
+  if needKnife and (not Inventory.Items.Contains('Knife')) then
+    Bank.Withdraw('Knife', True, True);
+
+  if needChisel and (not Inventory.Items.Contains('Chisel')) then
+    Bank.Withdraw('Chisel', True, True);
+
+  Bank.Close();
+  Activity.Restart();
+  Result := hasAxe and hasPick;
+end;
+
+(*
+## Human.SetupConnectedRegion
+Sets up the target `echunks`. If the player is currently standing outside the
+selected chunk (e.g., logged in at Lumbridge or Falador when starting a Varrock
+or Draynor script), automatically expands the map to the unified Central Mainland
+Corridor (`Box(45, 55, 53, 48)`) so `Map.Walker.WebWalk` and `TryTeleportNear`
+can navigate across cities seamlessly!
+*)
+procedure THumanCore.SetupConnectedRegion(echunks: set of EChunk);
+begin
+  Self.DoorsLoaded := False;
+  Map.Setup(echunks);
+
+  if Client.IsLoggedIn() then
+  begin
+    Map.Position();
+    if Map.Similarity < 0.56 then
+    begin
+      Logger.Warn('Player appears to be outside the local chunk (similarity ' +
+                  FormatFloat('0.00', Map.Similarity) +
+                  '). Loading connected Mainland Super-Chunk (Falador <-> Edgeville <-> Varrock <-> Lumbridge <-> Draynor <-> Al Kharid)...');
+      Map.Add([Chunk(Box(45, 55, 53, 48), 0)]);
+    end;
+  end;
+end;
+
+(*
+## Human.HumanizedDrop
+Drops items using biometric inventory patterns, with a ~22% chance to leave 1-2
+stray items behind like a real player rushing back to the next node.
+*)
+function THumanCore.HumanizedDrop(dropItems: TItemArray): Boolean;
+var
+  slots, pattern, ordered: TIntegerArray;
+  s, cutCount: Integer;
+begin
+  slots := Inventory.Items.IndicesOf(dropItems);
+  if slots = [] then
+    Exit(True);
+
+  pattern := Inventory.RandomPattern();
+  for s in pattern do
+    if slots.Contains(s) then
+      ordered += s;
+
+  if (Length(ordered) > 6) and RandomBoolean(0.22) then
+  begin
+    cutCount := Random(1, 2);
+    SetLength(ordered, Length(ordered) - cutCount);
+  end;
+
+  Self.ReactDelay(180, 550);
+  Result := Inventory.ShiftDrop(ordered);
+  Self.RollInventoryLimit();
+end;
+
+(*
+## Human.CheckAndPickupNest
+Checks for a bird's nest drop via chat or nearby red minimap item dots,
+projects the dot to the MainScreen, and picks it up after a human recognition pause.
+*)
+function THumanCore.CheckAndPickupNest(searchRadiusPx: Integer = 20): Boolean;
+var
+  dots: TPointArray;
+  dot: TPoint;
+  quad: TQuad;
+  radians: Single;
+  prevCount: Integer;
+begin
+  if Inventory.IsFull() then
+    Exit(False);
+
+  if not (Chat.ContainsMessage('nest falls out', False) or
+          Chat.ContainsMessage('bird''s nest', False)) then
+    Exit(False);
+
+  dots := Minimap.GetDots(EDot.ITEM, TBox.Create(Minimap.Center, searchRadiusPx, searchRadiusPx));
+  if dots = [] then
+    Exit(False);
+
+  Self.ReactDelay(380, 1450);
+  dots := dots.SortFrom(Minimap.Center);
+  radians := Minimap.CompassRadians;
+  prevCount := Inventory.Slots.Count();
+
+  for dot in dots do
+  begin
+    quad := Minimap.Vector2MSQuad((dot + [1, 1]).ToVec3(), radians, [0.65, 0.65]);
+    if MainScreen.Interact(quad.Mean, ['Take Bird nest', 'Bird nest']) then
+    begin
+      Minimap.WaitMoving();
+      Result := Inventory.Slots.WaitCount(prevCount + 1, 2400);
+      if Result then
+        Break;
+    end;
+  end;
+end;
+
+(*
+## Human.GetNearbyPlayerCount / CheckCrowdAndHop
+Counts white player dots within `radiusPx` of the player on the minimap
+(clustering adjacent pixels since a single player dot can return 2 points).
+If too many crashers stay on our spot, hovers them or hops worlds if configured.
+*)
+function THumanCore.GetNearbyPlayerCount(radiusPx: Integer = 16): Integer;
+var
+  dots: TPointArray;
+  clusters: T2DPointArray;
+begin
+  dots := Minimap.GetDots(EDot.PLAYER, TBox.Create(Minimap.Center, radiusPx, radiusPx));
+  if dots = [] then
+    Exit(0);
+  clusters := dots.Cluster(2.5);
+  Result := Length(clusters);
+end;
+
+function THumanCore.CheckCrowdAndHop(maxPlayersAllowed: Integer = 3): Boolean;
+var
+  nearby: Integer;
+begin
+  nearby := Self.GetNearbyPlayerCount(16);
+  if nearby >= maxPlayersAllowed then
+    Inc(Self.CrowdedStrikes)
+  else
+  begin
+    Self.CrowdedStrikes := Max(0, Self.CrowdedStrikes - 1);
+    Exit(False);
+  end;
+
+  if Self.CrowdedStrikes < 4 then
+    Exit(False);
+
+  Self.CrowdedStrikes := 0;
+  if RandomBoolean(0.45) then
+    Antiban.HoverRandomPlayer();
+
+  if (Profiles <> []) and InRange(ProfileIndex, 0, High(Profiles)) and
+     (Length(Profiles[ProfileIndex].Worlds) > 1) and WorldSwitcher.Cooldown.IsFinished then
+  begin
+    Self.ReactDelay(600, 2200);
+    Result := WorldSwitcher.Random();
+    if Result then
+      Self.PostLoginRitual();
+  end;
+end;
+
+(*
+## Human.GenerateHumanRSN & Human.MutateRSN
+Generates endless, authentic human-style OSRS display names (strictly <= 12 chars)
+across 6 distinct real-player naming archetypes, and mutates taken names the way
+a real human does (appending birth year/lucky digits, 'rs'/'os', or swapping a
+separator) so we NEVER touch Jagex's bot-flagged "Suggested Name" buttons!
+*)
+function THumanCore.GenerateHumanRSN(): String;
+var
+  adjectives, nouns, cozyWords, roots, suffixes, retroPrefixes, retroNouns, numTags: TStringArray;
+  archetype: Integer;
+  w1, w2, numStr: String;
+begin
+  adjectives := [
+    'Iron', 'Drift', 'Vex', 'Ash', 'Frost', 'Dusk', 'Grim', 'Sly', 'Swift', 'Pale',
+    'Wild', 'Calm', 'Void', 'Solar', 'Lunar', 'Storm', 'Flint', 'Moss', 'Cinder', 'Brim',
+    'echo', 'mist', 'haze', 'rust', 'sage', 'onyx', 'jade', 'coal', 'rune', 'oak'
+  ];
+  nouns := [
+    'Wren', 'Talon', 'Kestrel', 'Badger', 'Viper', 'Hound', 'Falcon', 'Raven', 'Otter', 'Stag',
+    'Pike', 'Finch', 'Heron', 'Lynx', 'Fox', 'Wolf', 'Crow', 'Moth', 'Toad', 'Bear',
+    'Spark', 'Blade', 'Forge', 'Anvil', 'Crest', 'Briar', 'Thorn', 'Brook', 'Vale', 'Ridge'
+  ];
+  cozyWords := [
+    'Cozy', 'Sleepy', 'Chilly', 'Lazy', 'Comfy', 'Quiet', 'Happy', 'Rusty', 'Salty', 'Fuzzy',
+    'Logs', 'Yews', 'Oaks', 'Ores', 'Gems', 'Tea', 'Soup', 'Bread', 'Trout', 'Monk'
+  ];
+  roots := [
+    'kael', 'vael', 'torv', 'soren', 'zarik', 'draven', 'kyro', 'zeke', 'malik', 'orion',
+    'vesp', 'kuro', 'zeph', 'sola', 'nyx', 'bren', 'toma', 'corv', 'riva', 'fen'
+  ];
+  suffixes := [
+    'en', 'or', 'ik', 'is', 'ax', 'on', 'ar', 'os', 'ia', 'us', 'ex', 'in'
+  ];
+  retroPrefixes := [
+    'Pk', 'Pure', 'Dds', 'Scim', 'Barrows', 'Gmaul', 'Str', 'Range', 'Mage', 'Skiller'
+  ];
+  retroNouns := [
+    'Kid', 'Pro', 'Boy', 'Ace', 'King', 'Lad', 'God', 'Boi', 'Bro', 'Guy'
+  ];
+  numTags := [
+    '7', '9', '12', '23', '42', '73', '88', '94', '96', '97', '98', '99', '01', '02', '04', '07'
+  ];
+
+  archetype := Random(0, 5);
+  case archetype of
+    // Archetype 0: Clean 2-word PascalCase or Spaced compound (e.g. "DriftWren", "Iron Kestrel")
+    0:
+      begin
+        repeat
+          w1 := adjectives[Random(0, High(adjectives))].Capitalize();
+          w2 := nouns[Random(0, High(nouns))].Capitalize();
+        until Length(w1) + Length(w2) <= 12;
+
+        if (Length(w1) + 1 + Length(w2) <= 12) and RandomBoolean(0.42) then
+          Result := w1 + ' ' + w2
+        else
+          Result := w1 + w2;
+      end;
+
+    // Archetype 1: Lowercase aesthetic / phonetic handle + optional 'rs'/'os' or 2-digit year
+    1:
+      begin
+        w1 := roots[Random(0, High(roots))] + suffixes[Random(0, High(suffixes))];
+        if RandomBoolean(0.35) then
+          w1 := w1.Capitalize();
+        if RandomBoolean(0.45) then
+          Result := w1 + numTags[Random(0, High(numTags))]
+        else if RandomBoolean(0.40) then
+          Result := w1 + 'rs'
+        else
+        begin
+          w2 := nouns[Random(0, 9)].ToLower();
+          if Length(w1) + 1 + Length(w2) <= 12 then
+            Result := w1 + ' ' + w2
+          else if Length(w1) + Length(w2) <= 12 then
+            Result := w1 + w2
+          else
+            Result := w1 + 'rs';
+        end;
+      end;
+
+    // Archetype 2: Nostalgic 2007-era OSRS handle (e.g. "PureScim99", "DdsKid07")
+    2:
+      begin
+        w1 := retroPrefixes[Random(0, High(retroPrefixes))];
+        w2 := retroNouns[Random(0, High(retroNouns))];
+        numStr := numTags[Random(0, High(numTags))];
+        if Length(w1 + w2 + numStr) <= 12 then
+          Result := w1 + w2 + numStr
+        else
+          Result := w1 + numStr;
+      end;
+
+    // Archetype 3: Cozy Skilling / Iron-style name (e.g. "CozyWillow", "Sleepy Ores")
+    3:
+      begin
+        repeat
+          w1 := cozyWords[Random(0, 9)];
+          w2 := cozyWords[Random(10, High(cozyWords))];
+        until Length(w1) + Length(w2) <= 12;
+
+        if (Length(w1) + 1 + Length(w2) <= 12) and RandomBoolean(0.45) then
+          Result := w1 + ' ' + w2
+        else
+          Result := w1 + w2;
+      end;
+
+    // Archetype 4: Short fantasy name + initial or number (e.g. "Soren V", "Kaelen98")
+    4:
+      begin
+        w1 := (roots[Random(0, High(roots))] + suffixes[Random(0, High(suffixes))]).Capitalize();
+        if RandomBoolean(0.50) then
+          Result := w1 + ' ' + Chr(Ord('A') + Random(0, 25))
+        else
+          Result := w1 + numTags[Random(0, High(numTags))];
+      end;
+
+    // Archetype 5: Lowercase 2-word + single digit (e.g. "ash viper7", "mist hound")
+    else
+      begin
+        repeat
+          w1 := adjectives[Random(0, High(adjectives))].ToLower();
+          w2 := nouns[Random(0, High(nouns))].ToLower();
+        until Length(w1) + Length(w2) <= 12;
+
+        if Length(w1 + ' ' + w2) <= 11 then
+          Result := w1 + ' ' + w2 + ToStr(Random(2, 9))
+        else if Length(w1 + ' ' + w2) <= 12 then
+          Result := w1 + ' ' + w2
+        else
+          Result := w1 + w2;
+      end;
+  end;
+
+  if Length(Result) > 12 then
+    Result := Copy(Result, 1, 12).Trim();
+end;
+
+function THumanCore.MutateRSN(baseName: String): String;
+var
+  clean, suffix: String;
+  tails, parts, shortTails: TStringArray;
+begin
+  clean := baseName.Trim();
+
+  // Strip trailing digits before adding a new suffix
+  while (Length(clean) > 0) and (clean[Length(clean)] in '0123456789') do
+    SetLength(clean, Length(clean) - 1);
+  clean := clean.Trim();
+  if clean = '' then
+    clean := baseName.Trim();
+
+  tails := ['7', '9', '99', '98', '97', '07', '01', '23', '73', 'rs', 'os', 'x'];
+  suffix := tails[Random(0, High(tails))];
+
+  // If compound name with space, first try removing the space to fit the suffix
+  if (' ' in clean) then
+  begin
+    if Length(clean.Replace(' ', '')) + Length(suffix) <= 12 then
+      clean := clean.Replace(' ', '')
+    else if RandomBoolean(0.45) then
+      clean := clean.Replace(' ', '');
+  end;
+
+  if Length(clean) + Length(suffix) <= 12 then
+    Exit(clean + suffix);
+
+  // If still too long, try a 1-character suffix ('7', '9', 'x') if Length(clean) <= 11
+  if Length(clean) <= 11 then
+  begin
+    shortTails := ['7', '9', 'x'];
+    Exit(clean + shortTails[Random(0, High(shortTails))]);
+  end;
+
+  // If clean has words, fall back cleanly to the first word parts[0] + suffix if Length(parts[0]) + Length(suffix) <= 12
+  if ' ' in clean then
+  begin
+    parts := clean.Split(' ');
+    if (Length(parts) >= 1) and (Length(parts[0]) + Length(suffix) <= 12) then
+      Exit(parts[0] + suffix);
+  end;
+
+  // Otherwise generate a fresh authentic RSN rather than producing a chopped word
+  Result := Self.GenerateHumanRSN();
+end;
+
+(*
+## Human.SetupChatResponder & Human.CheckAndReplyChat
+Guarded OSRS Slang + LLM Public Chat Responder.
+Rules that keep bots safe from "baiting" bans:
+  - Never replies if no other player is within 20px on the Minimap.
+  - Enforces a 95..240s cooldown between replies and caps replies per session.
+  - Only replies to relevant local chat (level checks, greetings, direct mentions),
+    never spamming or replying instantly (waits 2.2-5.8s human read+type time).
+*)
+procedure THumanCore.SetupChatResponder(enableChat: Boolean; useLLM: Boolean = False);
+begin
+  Self.ChatEnabled := enableChat;
+  Self.UseLLMChat  := useLLM;
+  Self.ChatCheckTimer.Start(RandomRange(6000, 12000));
+  Self.ChatReplyCooldown.Start(15000);
+
+  if useLLM and (not LLMClient.IsSetup) then
+  begin
+    LLMClient.Setup();
+    if LLMClient.Model = '' then
+      LLMClient.Model := 'granite4.1:3b';
+    LLMClient.MaxCharacters := 42;
+    LLMClient.SystemMessage :=
+      'You are playing Old School RuneScape (OSRS) while semi-AFK skilling and watching YouTube. ' +
+      'Reply in 1 to 5 words max, all lowercase, casual OSRS slang (ty, nice, chill, afk, gl, yeah lol). ' +
+      'Never use formal punctuation, never sound like an AI assistant.';
+    LLMClient.SetupPayload();
+    LLMClient.Enabled := True;
+  end;
+end;
+
+function THumanCore.CheckAndReplyChat(currentActivity: String = 'skilling'): Boolean;
+var
+  lastLine, sender, msg, lowerMsg, reply, myName: String;
+  lvl: Integer;
+  isDirectQuestion, isGreeting: Boolean;
+begin
+  if (not Self.ChatEnabled) or (not Self.ChatCheckTimer.IsFinished) then
+    Exit(False);
+
+  Self.ChatCheckTimer.Start(RandomRange(4500, 9500));
+
+  if (not Self.ChatReplyCooldown.IsFinished) or (Self.ChatRepliesCount >= 10) then
+    Exit(False);
+
+  // Only check chat if there is actually a player near us on the minimap!
+  if Self.GetNearbyPlayerCount(20) = 0 then
+    Exit(False);
+
+  // Guard against open interfaces, dialogue continue, level-up popups, or active queries
+  if MSInterface.IsOpen() or Make.IsOpen() or Chat.ContainsContinue() or Chat.LeveledUp() or (Chat.GetQuery() <> '') then
+    Exit(False);
+
+  // Read raw OCR line directly to preserve ':' and '?' punctuation that Chat.GetMessage() strips
+  if Chat.IsTransparent() then
+    lastLine := Chat._GetTransparentMessage(High(Chat.MessageLines))
+  else if Chat.IsOpen() then
+    lastLine := Chat._GetMessage(High(Chat.MessageLines))
+  else
+    Exit(False);
+
+  if (lastLine = '') or (lastLine = Self.LastSeenChatLine) or (not lastLine.Contains(':')) then
+    Exit(False);
+
+  Self.LastSeenChatLine := lastLine;
+  sender := lastLine.Before(':').ExtractText().Trim();
+  msg    := lastLine.After(':').Trim();
+  if (sender = '') or (msg = '') then
+    Exit(False);
+
+  if Self.CachedDisplayName = '' then
+    Self.CachedDisplayName := Chat.GetDisplayName();
+  myName := Self.CachedDisplayName;
+
+  if (myName <> '') and (LowerCase(sender) = LowerCase(myName)) then
+    Exit(False);
+
+  lowerMsg := LowerCase(msg);
+
+  isDirectQuestion :=
+    lowerMsg.ContainsAny(['wc lvl', 'mining lvl', 'lvl?', 'levels?', 'level?', 'bot?', 'bots?', 'u a bot', 'anyone here']) or
+    ((myName <> '') and lowerMsg.Contains(LowerCase(myName)));
+
+  isGreeting :=
+    lowerMsg.ContainsAny(['sup', 'yo ', 'hey', 'hi ', 'gl ', 'nice']);
+
+  if (not isDirectQuestion) and (not isGreeting) then
+    Exit(False);
+
+  // Real OSRS players ignore most random public chat while AFK on a second monitor
+  if isDirectQuestion and (not RandomBoolean(0.62)) then
+    Exit(False);
+  if (not isDirectQuestion) and (not RandomBoolean(0.28)) then
+    Exit(False);
+
+  reply := '';
+  if Self.UseLLMChat and LLMClient.IsSetup and LLMClient.Enabled then
+    reply := LowerCase(LLMClient.Chat(sender, msg).Trim());
+
+  if reply = '' then
+  begin
+    if lowerMsg.ContainsAny(['lvl', 'level']) then
+    begin
+      if LowerCase(currentActivity).Contains('mine') or LowerCase(currentActivity).Contains('mining') then
+        lvl := Stats.GetLevel(ESkill.MINING)
+      else
+        lvl := Stats.GetLevel(ESkill.WOODCUTTING);
+
+      case Random(0, 3) of
+        0: reply := ToStr(lvl) + ' u?';
+        1: reply := ToStr(lvl) + ' atm';
+        2: reply := 'just hit ' + ToStr(lvl);
+        3: reply := ToStr(lvl) + ' lol slow grind';
+      end;
+    end
+    else if lowerMsg.Contains('bot') then
+    begin
+      case Random(0, 3) of
+        0: reply := 'nah just afk watching yt lol';
+        1: reply := 'lol no just 2nd monitor';
+        2: reply := 'nah chill grinding';
+        3: reply := 'nope just semi afk';
+      end;
+    end
+    else if lowerMsg.ContainsAny(['nice', 'gl']) then
+    begin
+      case Random(0, 2) of
+        0: reply := 'ty u too';
+        1: reply := 'ty gl';
+        2: reply := 'cheers gl';
+      end;
+    end
+    else
+    begin
+      case Random(0, 3) of
+        0: reply := 'yo';
+        1: reply := 'sup';
+        2: reply := 'hey gl';
+        3: reply := 'yo chill grind today';
+      end;
+    end;
+  end;
+
+  if reply = '' then
+    Exit(False);
+
+  // Realistic human reading + noticing + typing latency (2.2s - 5.8s)
+  Biometrics.Sleep(2200, 5800, ERandomDir.LEFT);
+
+  // Re-verify that no level-up, Make menu, or interface opened during the typing sleep!
+  if MSInterface.IsOpen() or Make.IsOpen() or Chat.ContainsContinue() or Chat.LeveledUp() or (Chat.GetQuery() <> '') then
+    Exit(False);
+
+  Keyboard.Send(reply, EKeyCode.RETURN);
+
+  Inc(Self.ChatRepliesCount);
+  Self.ChatReplyCooldown.Start(RandomRange(95 * SECOND, 240 * SECOND));
+  Logger.Info('Replied to nearby player [' + sender + ']: "' + reply + '"');
+  Result := True;
+end;
+
+(*
+## Human.SyncSwarm
+Writes live bot telemetry JSON + live mini-screen `.png` snapshot to
+`C:\Simba\Swarm\telemetry\` every 4 seconds for the Mobile PWA Dashboard, and
+processes remote commands (`PAUSE`, `RESUME`, `HOP`, `CHAT:<msg>`, `LOGOUT_STOP`)
+from `C:\Simba\Swarm\commands\<botId>.cmd`.
+*)
+procedure THumanCore.SyncSwarm(scriptName, stateName: String; actions: UInt64);
+var
+  baseDir, teleDir, cmdDir, cmdFile, cmdText, chatMsg, jsonStr, rsn, attStr: String;
+  img: TImage;
+  pos: TPoint;
+  paused: Boolean;
+begin
+  if not Self.SwarmSyncTimer.IsFinished then
+    Exit;
+
+  Self.SwarmSyncTimer.Start(4000);
+
+  baseDir := SimbaEnv.SimbaPath + 'Swarm' + PATH_SEP;
+  teleDir := baseDir + 'telemetry' + PATH_SEP;
+  cmdDir  := baseDir + 'commands' + PATH_SEP;
+  DirCreate(baseDir);
+  DirCreate(teleDir);
+  DirCreate(cmdDir);
+
+  if Self.BotID = '' then
+  begin
+    if (Profiles <> []) and InRange(ProfileIndex, 0, High(Profiles)) and (Profiles[ProfileIndex].Name <> '') then
+      Self.BotID := Profiles[ProfileIndex].Name.Replace(' ', '_').ToLower()
+    else
+      Self.BotID := 'bot_main';
+  end;
+
+  if (Self.CachedDisplayName = '') and Client.IsLoggedIn() then
+    Self.CachedDisplayName := Chat.GetDisplayName();
+  rsn := Self.CachedDisplayName;
+  if rsn = '' then
+    rsn := Self.BotID;
+
+  attStr := ToStr(Self.Attention).After('EAttentionState.');
+  pos := [0, 0];
+  if Map.IsSetup and Client.IsLoggedIn() then
+    pos := Map.Position();
+
+  // Guard against tab snapping: only call Inventory.Slots.Count() when the inventory is already open
+  if Inventory.IsOpen() and (not MSInterface.IsOpen()) then
+    Self.LastInvCount := Inventory.Slots.Count();
+
+  jsonStr :=
+    '{' +
+    '"botId":"' + Self.BotID.Replace('"', '') + '",' +
+    '"rsn":"' + rsn.Replace('"', '') + '",' +
+    '"script":"' + scriptName.Replace('"', '') + '",' +
+    '"state":"' + stateName.Replace('"', '') + '",' +
+    '"attention":"' + attStr + '",' +
+    '"runtimeMs":' + ToStr(Logger.TimeRunning.Elapsed) + ',' +
+    '"runtimeFmt":"' + Logger.TimeRunning.ElapsedFmt() + '",' +
+    '"actions":' + ToStr(actions) + ',' +
+    '"invCount":' + ToStr(Self.LastInvCount) + ',' +
+    '"invLimit":' + ToStr(Self.InventoryLimit) + ',' +
+    '"runEnergy":' + ToStr(Minimap.GetRunEnergy()) + ',' +
+    '"nearbyPlayers":' + ToStr(Self.GetNearbyPlayerCount(18)) + ',' +
+    '"chatReplies":' + ToStr(Self.ChatRepliesCount) + ',' +
+    '"posX":' + ToStr(pos.X) + ',' +
+    '"posY":' + ToStr(pos.Y) + ',' +
+    '"loggedIn":' + LowerCase(ToStr(Client.IsLoggedIn())) + ',' +
+    '"timestamp":' + ToStr(Time()) +
+    '}';
+
+  FileWrite(teleDir + Self.BotID + '.json', jsonStr);
+
+  // Separate screenshot saving onto a 15-20s timer or on state change to prevent gather stall
+  if Self.SwarmScreenshotTimer.IsFinished or (stateName <> Self.LastSwarmState) then
+  begin
+    Self.SwarmScreenshotTimer.Start(RandomRange(15000, 20000));
+    Self.LastSwarmState := stateName;
+    img := Target.GetImage();
+    img.Save(teleDir + Self.BotID + '.png', True);
+  end;
+
+  // Check for remote commands from the Mobile PWA / Chat Harness
+  cmdFile := cmdDir + Self.BotID + '.cmd';
+  if FileExists(cmdFile) then
+  begin
+    cmdText := FileRead(cmdFile).Trim();
+    FileDelete(cmdFile);
+
+    if cmdText = 'HOP' then
+    begin
+      if (Profiles <> []) and InRange(ProfileIndex, 0, High(Profiles)) and (Length(Profiles[ProfileIndex].Worlds) > 1) then
+      begin
+        Logger.Info('[Swarm Remote] Executing remote World Hop...');
+        WorldSwitcher.Random();
+      end
+      else
+        Logger.Warn('[Swarm Remote] Cannot HOP: Profile has no alternate worlds configured.');
+    end
+    else if cmdText.StartsWith('CHAT:') then
+    begin
+      chatMsg := cmdText.After('CHAT:').Trim();
+      if (chatMsg <> '') and (not MSInterface.IsOpen()) and (not Make.IsOpen()) and (not Chat.ContainsContinue()) and (Chat.GetQuery() = '') then
+      begin
+        Logger.Info('[Swarm Remote] Sending public chat message: ' + chatMsg);
+        Keyboard.Send(chatMsg, EKeyCode.RETURN);
+      end
+      else
+        Logger.Warn('[Swarm Remote] Skipped CHAT command (empty message or blocked by open interface).');
+    end
+    else if cmdText = 'LOGOUT_STOP' then
+    begin
+      Logger.Info('[Swarm Remote] Clean Logout & Stop requested from Mobile PWA!');
+      if Client.IsLoggedIn() then
+        Logout.Logout();
+      TerminateScript('Stopped cleanly via Swarm Mobile PWA.');
+    end
+    else if cmdText = 'PAUSE' then
+    begin
+      Logger.Info('[Swarm Remote] Paused via Mobile PWA. Waiting for RESUME...');
+      paused := True;
+      while paused do
+      begin
+        Sleep(2000);
+        if FileExists(cmdFile) then
+        begin
+          cmdText := FileRead(cmdFile).Trim();
+          FileDelete(cmdFile);
+          if cmdText = 'RESUME' then
+            paused := False
+          else if cmdText = 'LOGOUT_STOP' then
+          begin
+            if Client.IsLoggedIn() then
+              Logout.Logout();
+            TerminateScript('Stopped cleanly via Swarm Mobile PWA.');
+          end;
+        end;
+      end;
+      Logger.Info('[Swarm Remote] Resumed via Mobile PWA!');
+    end;
+  end;
+end;
+
+procedure THumanCore.OnBreakStart(task: PBreakTask);
+begin
+  if (@Self.SafeBreakCallback <> nil) and Client.IsLoggedIn() then
+    Self.SafeBreakCallback();
+
+  if MSInterface.IsOpen() and RandomBoolean(0.75) then
+    MSInterface.Close();
+end;
+
+procedure THumanCore.OnSleepStart(task: PSleepTask);
+begin
+  if (@Self.SafeBreakCallback <> nil) and Client.IsLoggedIn() then
+    Self.SafeBreakCallback();
+
+  if MSInterface.IsOpen() then
+    MSInterface.Close();
+end;
+
+procedure THumanCore.OnBreakFinish(task: PBreakTask);
+begin
+  // Only reset session timer if the break was at least 15 minutes long
+  if (task <> nil) and (task^.Length >= 15 * MINUTE) then
+  begin
+    Self.SessionTimer.Reset();
+    Self.SessionTimer.Start();
+  end;
+
+  Self.Attention := EAttentionState.FOCUSED;
+  Self.AttentionTimer.Start(RandomLeft(4 * MINUTE, 10 * MINUTE));
+  Self.UpdateMousePhysics();
+
+  if not Client.IsLoggedIn() then
+    Login.DoLogin();
+  Self.PostLoginRitual();
+end;
+
+procedure THumanCore.OnSleepFinish(task: PSleepTask);
+begin
+  Self.SessionTimer.Reset();
+  Self.SessionTimer.Start();
+  Self.Attention := EAttentionState.FOCUSED;
+  Self.AttentionTimer.Start(RandomLeft(5 * MINUTE, 15 * MINUTE));
+  Self.UpdateMousePhysics();
+
+  if not Client.IsLoggedIn() then
+    Login.DoLogin();
+  Self.PostLoginRitual();
+end;
+
+procedure THumanCore.Setup(skills: array of ESkill; minZoom: Integer = 20; maxZoom: Integer = 65);
+var
+  mealLogout, bioLogout: Double;
+begin
+  Self.SessionTimer.Start();
+  Self.SwarmSyncTimer.Start(1000);
+  Self.SwarmScreenshotTimer.Start(RandomRange(3000, 6000));
+  Self.LastInvCount := 0;
+  Self.LastSwarmState := '';
+  Self.LastClickedCoord := [-1, -1];
+  Self.SetupChatResponder(True, False);
+
+  Self.BaseSpeed    := 10.5 + 4.0 * Biometrics.GetProbability(EBiometric.MOUSE_SPEED);
+  Self.BaseGravity  := 8.0  + 3.0 * Biometrics.GetProbability(EBiometric.MOUSE_GRAVITY);
+  Self.BaseWind     := 3.8  + 2.4 * Biometrics.GetProbability(EBiometric.MOUSE_WIND);
+  Self.BasePressMin := 42   + Round(25 * Biometrics.GetProbability(EBiometric.MIN_CLICKTIME));
+  Self.BasePressMax := Self.BasePressMin + 35 + Round(45 * Biometrics.GetProbability(EBiometric.MAX_CLICKTIME));
+
+  Mouse.MissChance   := 0.015 + 0.025 * Biometrics.GetProbability(EBiometric.MULTIPLIER);
+  Mouse.IdleInterval := 1.8   + 1.6   * Biometrics.GetProbability(EBiometric.BREAKS);
+  Mouse.CanIdle      := True;
+
+  Self.Attention := EAttentionState.FOCUSED;
+  Self.AttentionTimer.Start(RandomLeft(4 * MINUTE, 10 * MINUTE));
+  Self.RollInventoryLimit();
+  Self.UpdateMousePhysics();
+
+  Antiban.Skills := skills;
+  Antiban.Zoom.Min := minZoom;
+  Antiban.Zoom.Max := maxZoom;
+
+  Antiban.OnStartBreak  := @Self.OnBreakStart;
+  Antiban.OnStartSleep  := @Self.OnSleepStart;
+  Antiban.OnFinishBreak := @Self.OnBreakFinish;
+  Antiban.OnFinishSleep := @Self.OnSleepFinish;
+
+  if Antiban.Tasks = [] then
+  begin
+    Antiban.AddTask(@Antiban.AdjustZoom,        Biometrics.RandomModeInteger(14, 9, 22) * MINUTE, 0.35);
+    Antiban.AddTask(@Antiban.RandomCameraTask,  Biometrics.RandomModeInteger(8, 5, 14)  * MINUTE, 0.35);
+    Antiban.AddTask(@Antiban.RandomMouseTask,   Biometrics.RandomModeInteger(7, 4, 12)  * MINUTE, 0.35);
+    Antiban.AddTask(@Antiban.LoseFocus,         Biometrics.RandomModeInteger(11, 6, 18) * MINUTE, 0.40);
+    Antiban.AddTask(@Antiban.RandomGameTabTask, Biometrics.RandomModeInteger(16, 10, 26)* MINUTE, 0.35);
+    Antiban.AddTask(@Antiban.HoverSkills,       Biometrics.RandomModeInteger(19, 12, 30)* MINUTE, 0.35);
+  end;
+
+  if Antiban.Breaks = [] then
+  begin
+    // Tier 1: Micro-AFK (phone check / alt-tab, stays logged in 96% of the time)
+    Antiban.AddBreak(
+      Biometrics.RandomModeInteger(32, 24, 44) * MINUTE,
+      Biometrics.RandomModeDouble(2.2, 1.2, 4.0) * MINUTE,
+      0.38,
+      0.04
+    );
+
+    // Tier 2: Bio / stretch gap (mix of natural 5m idle-out and explicit logout)
+    bioLogout := Min(0.75, Max(0.20, 0.42 * Biometrics.RandomDouble(1.1)));
+    Antiban.AddBreak(
+      Biometrics.RandomModeInteger(85, 65, 115) * MINUTE,
+      Biometrics.RandomModeDouble(9.5, 6.0, 15.0) * MINUTE,
+      0.35,
+      bioLogout
+    );
+
+    // Tier 3: Real-life meal / errand gap (32-75m offline gap every ~3-4.3 hours)
+    mealLogout := Min(0.98, Max(0.75, 0.88 * Biometrics.RandomDouble(1.05)));
+    Antiban.AddBreak(
+      Biometrics.RandomModeInteger(210, 165, 260) * MINUTE,
+      Biometrics.RandomModeDouble(48.0, 32.0, 75.0) * MINUTE,
+      0.35,
+      mealLogout
+    );
+  end;
+
+  if Antiban.Sleeps = [] then
+  begin
+    Antiban.AddSleep(
+      Biometrics.GetSleepHour(),
+      Biometrics.GetSleepLength() * HOUR,
+      0.14,
+      0.92
+    );
+  end;
+end;

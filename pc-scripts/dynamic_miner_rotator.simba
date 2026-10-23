@@ -1,0 +1,572 @@
+(*
+# Dynamic Miner & Guild Human Rotator (Simba 2.0 + WaspLib)
+Built on HumanCore v3 to emulate a genuine OSRS human player:
+  - Supports Progressive Auto-Leveling (Copper/Tin -> Iron -> Coal -> Mithril)
+    or fixed rock tiers across Varrock, Al Kharid, Lumbridge, and Mining Guild.
+  - Dynamically alternates Copper & Tin when training early levels just like a
+    real player preparing bronze bars.
+  - Preserves uncut gems (Sapphire, Emerald, Ruby, Diamond) and Clue geodes
+    during power-dropping, and deposits everything safely at randomized bank booths.
+  - Uses Markov-Chain Attention States (FOCUSED, CASUAL, SECOND_MONITOR),
+    anti-Slot-28 inventory limits, and anti-crowd world hopping.
+*)
+
+{$I WaspLib/main.simba}
+{$INCLUDE_ONCE human_core.simba}
+
+type
+  EMineLocation = enum(
+    VARROCK_EAST,
+    VARROCK_WEST,
+    AL_KHARID,
+    FALADOR_MINING_GUILD,
+    LUMBRIDGE_DRAYNOR
+  );
+
+  ERockTier = enum(
+    PROGRESSIVE_AUTO,
+    COPPER_AND_TIN,
+    IRON_ROCKS,
+    SILVER_ROCKS,
+    COAL_ROCKS,
+    GOLD_ROCKS,
+    MITHRIL_ROCKS,
+    ADAMANTITE_ROCKS
+  );
+
+  EMinerDisposal = enum(
+    HYBRID_BANK_AND_DROP, // Rotates between banking a few loads and power-dropping
+    BANK_ORES_AND_GEMS,   // Always banks ores & gems at randomized booths
+    POWER_DROP_KEEP_GEMS  // Drops ores with anti-slot-28 variance, keeps uncut gems
+  );
+
+  EMinerState = enum(
+    LOGIN,
+    LEVEL_UP,
+    CLOSE_INTERFACE,
+
+    OPEN_BANK,
+    DEPOSIT_ITEMS,
+    DROP_ORES,
+
+    USE_SPEC,
+    MINE_ROCK,
+
+    NO_ACTIVITY, MAX_ACTIONS, MAX_TIME, MAX_LEVEL, END_SCRIPT
+  );
+
+  TDynamicMiner = record
+    Actions, MaxTime, MaxActions: UInt64;
+    LevelGoals: Boolean;
+
+    Location: EMineLocation;
+    RockTier: ERockTier;
+    DisposalMode: EMinerDisposal;
+    CurrentlyBanking: Boolean;
+    UseSpec, PreHoverNext: Boolean;
+
+    CurrentRockObjs: TObjectArray;
+    CurrentRockName: String;
+    CopperToggle: Boolean;
+
+    KeepTools: TItemArray;
+    DroppableOres: TItemArray;
+    BankableLoot: TItemArray;
+
+    InventoriesUntilRotate: Integer;
+    RotationTimer: TCountDown;
+  end;
+
+var
+  Miner: TDynamicMiner;
+  MinerForm: TScriptForm;
+  MinerConfig: TConfigJSON;
+
+  MineLocCombo, RockTierCombo, MineModeCombo: TLazComboBox;
+  MineSpecCheck, MinePreHoverCheck: TLazCheckBox;
+
+procedure TDynamicMiner.PickDisposalHabit();
+begin
+  Self.InventoriesUntilRotate := Biometrics.RandomModeInteger(3, 2, 6);
+
+  case Self.DisposalMode of
+    EMinerDisposal.BANK_ORES_AND_GEMS:
+      Self.CurrentlyBanking := True;
+
+    EMinerDisposal.POWER_DROP_KEEP_GEMS:
+      Self.CurrentlyBanking := False;
+
+    EMinerDisposal.HYBRID_BANK_AND_DROP:
+      begin
+        // Real players often bank a few inventories of ore/gems, then power-mine for faster XP
+        Self.CurrentlyBanking := RandomBoolean(0.60);
+        Logger.Info('Miner switched disposal habit -> Banking: ' + ToStr(Self.CurrentlyBanking) +
+                    ' for next ' + ToStr(Self.InventoriesUntilRotate) + ' inventories.');
+      end;
+  end;
+end;
+
+procedure TDynamicMiner.SelectRockForLevel();
+var
+  mineLevel: Integer;
+  resolvedTier: ERockTier;
+begin
+  resolvedTier := Self.RockTier;
+
+  if resolvedTier = ERockTier.PROGRESSIVE_AUTO then
+  begin
+    mineLevel := Stats.GetLevel(ESkill.MINING);
+    if (mineLevel >= 55) and RandomBoolean(0.55) then
+      resolvedTier := ERockTier.MITHRIL_ROCKS
+    else if (mineLevel >= 30) and RandomBoolean(0.65) then
+      resolvedTier := ERockTier.COAL_ROCKS
+    else if mineLevel >= 15 then
+      resolvedTier := ERockTier.IRON_ROCKS
+    else
+      resolvedTier := ERockTier.COPPER_AND_TIN;
+  end;
+
+  case resolvedTier of
+    ERockTier.COPPER_AND_TIN:
+      begin
+        Self.CopperToggle := not Self.CopperToggle;
+        if Self.CopperToggle then
+          Self.CurrentRockName := 'Copper rocks'
+        else
+          Self.CurrentRockName := 'Tin rocks';
+      end;
+    ERockTier.IRON_ROCKS:       Self.CurrentRockName := 'Iron rocks';
+    ERockTier.SILVER_ROCKS:     Self.CurrentRockName := 'Silver rocks';
+    ERockTier.COAL_ROCKS:       Self.CurrentRockName := 'Coal rocks';
+    ERockTier.GOLD_ROCKS:       Self.CurrentRockName := 'Gold rocks';
+    ERockTier.MITHRIL_ROCKS:    Self.CurrentRockName := 'Mithril rocks';
+    ERockTier.ADAMANTITE_ROCKS: Self.CurrentRockName := 'Adamantite rocks';
+  end;
+
+  Self.CurrentRockObjs := Human.LoadObjectsByName(Self.CurrentRockName);
+  if Self.CurrentRockObjs = [] then
+  begin
+    Logger.Warn(Self.CurrentRockName + ' not found in current region; falling back to Iron or Copper rocks.');
+    Self.CurrentRockObjs := Human.LoadObjectsByName('Iron rocks');
+    if Self.CurrentRockObjs <> [] then
+      Self.CurrentRockName := 'Iron rocks'
+    else
+    begin
+      Self.CurrentRockObjs := Human.LoadObjectsByName('Copper rocks');
+      Self.CurrentRockName := 'Copper rocks';
+    end;
+  end;
+
+  Self.RotationTimer.Start(Biometrics.RandomModeInteger(18, 10, 35) * MINUTE);
+  Logger.Info('Targeting rock: ' + Self.CurrentRockName + ' (' + ToStr(Length(Self.CurrentRockObjs)) + ' cache variants)');
+end;
+
+procedure TDynamicMiner.SetupRegion();
+begin
+  case Self.Location of
+    EMineLocation.VARROCK_EAST,
+    EMineLocation.VARROCK_WEST:         Human.SetupConnectedRegion([EChunk.VARROCK]);
+    EMineLocation.AL_KHARID:            Human.SetupConnectedRegion([EChunk.AL_KHARID]);
+    EMineLocation.FALADOR_MINING_GUILD:
+      if Stats.GetLevel(ESkill.MINING) >= 60 then
+        Human.SetupConnectedRegion([EChunk.FALADOR, EChunk.MINING_GUILD])
+      else
+      begin
+        Logger.Warn('Mining level is below 60 (Mining Guild requirement); loading surface Falador chunk only.');
+        Human.SetupConnectedRegion([EChunk.FALADOR]);
+      end;
+    EMineLocation.LUMBRIDGE_DRAYNOR:    Human.SetupConnectedRegion([EChunk.LUMBRIDGE, EChunk.DRAYNOR_VILLAGE]);
+  end;
+end;
+
+function TDynamicMiner.GetReportValues(): TStringArray;
+var
+  actionsStr, sleepInfo, modeStr: String;
+  xp: UInt64;
+begin
+  actionsStr := ToStr(Self.Actions);
+  if Self.MaxActions <> 0 then
+    actionsStr += '/' + ToStr(Self.MaxActions);
+
+  if Antiban.Sleeps = [] then
+    sleepInfo := 'No sleep'
+  else
+    sleepInfo := Antiban.TimeUntilSleep(Antiban.Sleeps.First, TIME_SHORT);
+
+  if Self.CurrentlyBanking then
+    modeStr := 'BANKING'
+  else
+    modeStr := 'POWER-DROP';
+
+  xp := XPBar.TotalEarnedXP(False);
+  Result := [
+    GetTimeStamp(TIME_SHORT),
+    Logger.TimeRunning.ElapsedFmt(TIME_SHORT),
+    Antiban.TimeRunning.ElapsedFmt(TIME_SHORT),
+    sleepInfo,
+    ToStr(Human.Attention) + ' / ' + modeStr,
+    actionsStr,
+    FormatNumber(Self.Actions / Max(1, Logger.TimeRunning.Elapsed) * HOUR),
+    FormatNumber(xp),
+    FormatNumber(xp / Max(1, Logger.TimeRunning.Elapsed) * HOUR)
+  ];
+end;
+
+procedure TDynamicMiner.Init();
+begin
+  Logger.Setup('Dynamic Human Miner');
+  ProgressReport.Setup(
+    'Dynamic Human Miner',
+    [
+      'Script runtime:', 'Botting runtime:', 'Antiban runtime:', 'Next sleep:',
+      'Attention / Mode:', 'Ores Mined:', 'Ores/H:', 'Total XP:', 'XP/H:'
+    ],
+    @Self.GetReportValues
+  );
+
+  Human.Setup(
+    [ESkill.MINING, ESkill.SMITHING, ESkill.CRAFTING, ESkill.TOTAL],
+    20, 58
+  );
+
+  if not Client.IsLoggedIn() then
+    Login.DoLogin();
+
+  StartListeners(300);
+
+  Self.KeepTools := [
+    'Bronze pickaxe', 'Iron pickaxe', 'Steel pickaxe', 'Black pickaxe',
+    'Mithril pickaxe', 'Adamant pickaxe', 'Rune pickaxe', 'Gilded pickaxe',
+    'Dragon pickaxe', 'Infernal pickaxe', 'Crystal pickaxe', '3rd age pickaxe',
+    'Chisel', 'Law rune', 'Air rune', 'Fire rune', 'Earth rune', 'Water rune',
+    'Varrock teleport', 'Falador teleport', 'Lumbridge teleport', 'Camelot teleport'
+  ];
+
+  Self.DroppableOres := [
+    'Clay', 'Copper ore', 'Tin ore', 'Iron ore', 'Silver ore',
+    'Coal', 'Gold ore', 'Mithril ore', 'Adamantite ore'
+  ];
+
+  Self.BankableLoot := [
+    'Clay', 'Copper ore', 'Tin ore', 'Iron ore', 'Silver ore',
+    'Coal', 'Gold ore', 'Mithril ore', 'Adamantite ore',
+    'Uncut sapphire', 'Uncut emerald', 'Uncut ruby', 'Uncut diamond',
+    'Clue geode (beginner)', 'Clue geode (easy)', 'Clue geode (medium)',
+    'Clue geode (hard)', 'Clue geode (elite)', 'Unidentified minerals'
+  ];
+
+  Self.SetupRegion();
+  Human.EnsureTools(False, True, False, False);
+  Self.SelectRockForLevel();
+  Self.PickDisposalHabit();
+  Activity.Restart();
+end;
+
+function TDynamicMiner.IsMining(): Boolean;
+var
+  playerBox: TBox;
+begin
+  playerBox := TBox.Create(MainScreen.Center, 32, 36);
+  Result := Target.GetPixelDifference(350, playerBox).Length >= 32;
+end;
+
+procedure TDynamicMiner.WaitMining();
+var
+  timeout: TCountDown;
+  didPreHover: Boolean;
+  earned: Boolean;
+begin
+  // Iron/Copper/Tin mine fast; Coal/Mithril/Gold take slightly longer
+  timeout.Start(Biometrics.RandomModeInteger(7500, 4500, 14000));
+
+  repeat
+    earned := XPBar.EarnedXP();
+    if earned then
+    begin
+      Inc(Self.Actions);
+      // Often after 1 XP drop on standard rocks, the vein is depleted!
+      if RandomBoolean(0.82) then
+        Break;
+      timeout.Restart(0, 2800);
+      if Inventory.Slots.Count() >= Human.InventoryLimit then
+        Break;
+    end;
+
+    if Chat.LeveledUp() then
+      Exit;
+
+    if Self.PreHoverNext and (not didPreHover) and
+       (Human.Attention = EAttentionState.FOCUSED) and RandomBoolean(0.12) then
+    begin
+      didPreHover := True;
+      Antiban.SmallRandomMouse();
+    end;
+
+    Antiban.DoAntiban(True, False, False);
+    Human.CheckAndReplyChat('mining');
+    Human.SyncSwarm('Dynamic Miner', 'MINING (' + Self.CurrentRockName + ')', Self.Actions);
+    Sleep(180, 420);
+  until timeout.IsFinished or ((not earned) and (not Self.IsMining()));
+
+  Human.ActionFinishDelay();
+end;
+
+function TDynamicMiner.GetState(): EMinerState;
+var
+  usedSlots: Integer;
+begin
+  if Activity.IsFinished then
+    Exit(EMinerState.NO_ACTIVITY);
+
+  if (Self.MaxActions > 0) and (Self.Actions >= Self.MaxActions) then
+    Exit(EMinerState.MAX_ACTIONS);
+
+  if (Self.MaxTime > 0) and (Logger.TimeRunning.Elapsed >= Self.MaxTime) then
+    Exit(EMinerState.MAX_TIME);
+
+  if Self.LevelGoals and Stats.AnyGoalsCompleted() then
+    Exit(EMinerState.MAX_LEVEL);
+
+  if not Client.IsLoggedIn() then
+    Exit(EMinerState.LOGIN);
+
+  if Chat.LeveledUp() then
+    Exit(EMinerState.LEVEL_UP);
+
+  if ((Self.RockTier = ERockTier.PROGRESSIVE_AUTO) or (Self.RockTier = ERockTier.COPPER_AND_TIN)) and
+     Self.RotationTimer.IsFinished then
+    Self.SelectRockForLevel();
+
+  if Bank.IsOpen() then
+  begin
+    if Inventory.Items.ContainsAny(Self.BankableLoot) then
+      Exit(EMinerState.DEPOSIT_ITEMS);
+    Exit(EMinerState.CLOSE_INTERFACE);
+  end;
+
+  usedSlots := Inventory.Slots.Count();
+  if usedSlots >= Human.InventoryLimit then
+  begin
+    // Toggle Copper <-> Tin per inventory when in COPPER_AND_TIN mode
+    if Self.RockTier = ERockTier.COPPER_AND_TIN then
+      Self.SelectRockForLevel();
+
+    if Self.CurrentlyBanking or (not Inventory.Items.ContainsAny(Self.DroppableOres)) then
+      Exit(EMinerState.OPEN_BANK)
+    else
+      Exit(EMinerState.DROP_ORES);
+  end;
+
+  if Self.UseSpec and (not Minimap.SpecialEnabled()) and Minimap.HasSpecial() and (Minimap.GetSpecLevel() = 100) then
+    Exit(EMinerState.USE_SPEC);
+
+  Result := EMinerState.MINE_ROCK;
+end;
+
+function TDynamicMiner.CheckCrowdAndHop(maxPlayersAllowed: Integer = 3): Boolean;
+begin
+  if (Profiles = []) or (not InRange(ProfileIndex, 0, High(Profiles))) or
+     (Length(Profiles[ProfileIndex].Worlds) <= 1) then
+    Exit(False);
+  Result := Human.CheckCrowdAndHop(maxPlayersAllowed);
+end;
+
+procedure TDynamicMiner.Run();
+var
+  state: EMinerState;
+begin
+  Self.Init();
+
+  repeat
+    state := Self.GetState();
+    Logger.Info('Miner State: ' + ToStr(state) + ' | Rock: ' + Self.CurrentRockName +
+                ' | Attention: ' + ToStr(Human.Attention));
+    Human.SyncSwarm('Dynamic Miner', ToStr(state).After('EMinerState.') + ' (' + Self.CurrentRockName + ')', Self.Actions);
+    Human.CheckAndReplyChat('mining');
+    ProgressReport.Print();
+
+    case state of
+      EMinerState.LOGIN:
+        Login.DoLogin();
+
+      EMinerState.LEVEL_UP:
+        begin
+          Human.ReactDelay(350, 1200);
+          Chat.HandleLevelUp();
+        end;
+
+      EMinerState.CLOSE_INTERFACE:
+        begin
+          Human.ReactDelay(200, 600);
+          MSInterface.Close();
+        end;
+
+      EMinerState.OPEN_BANK:
+        Human.OpenBank();
+
+      EMinerState.DEPOSIT_ITEMS:
+        if Human.DepositItems(Self.KeepTools) then
+        begin
+          Dec(Self.InventoriesUntilRotate);
+          if Self.InventoriesUntilRotate <= 0 then
+            Self.PickDisposalHabit();
+          Human.RollInventoryLimit();
+          if RandomBoolean(0.65) then
+            Bank.Close();
+        end;
+
+      EMinerState.DROP_ORES:
+        begin
+          Human.HumanizedDrop(Self.DroppableOres);
+          Dec(Self.InventoriesUntilRotate);
+          if Self.InventoriesUntilRotate <= 0 then
+            Self.PickDisposalHabit();
+        end;
+
+      EMinerState.USE_SPEC:
+        begin
+          Human.ReactDelay(250, 800);
+          Minimap.EnableSpecial(100);
+        end;
+
+      EMinerState.MINE_ROCK:
+        begin
+          Self.CheckCrowdAndHop(3);
+          Human.ReactDelay(160, 540);
+          if Human.WalkClickAny(Self.CurrentRockObjs) then
+          begin
+            Minimap.WaitMoving();
+            Self.WaitMining();
+          end
+          else
+            Biometrics.Sleep(500, 1400, ERandomDir.LEFT);
+        end;
+
+      EMinerState.NO_ACTIVITY, EMinerState.MAX_ACTIONS,
+      EMinerState.MAX_TIME, EMinerState.MAX_LEVEL,
+      EMinerState.END_SCRIPT:
+        Break;
+    end;
+
+    Antiban.DoAntiban();
+  until False;
+
+  Logger.Info('Mining session complete. Stay human!');
+end;
+
+procedure TScriptForm.OnStart(sender: TLazObject); override;
+begin
+  inherited();
+
+  Miner.Location     := EMineLocation(MineLocCombo.ItemIndex);
+  Miner.RockTier     := ERockTier(RockTierCombo.ItemIndex);
+  Miner.DisposalMode := EMinerDisposal(MineModeCombo.ItemIndex);
+  Miner.UseSpec      := MineSpecCheck.Checked;
+  Miner.PreHoverNext := MinePreHoverCheck.Checked;
+
+  if MinerConfig.Data.Assert('location', EJSONType.INT) then
+    MinerConfig.Data.Item['location'].AsInt := MineLocCombo.ItemIndex
+  else
+    MinerConfig.Data.AddInt('location', MineLocCombo.ItemIndex);
+
+  if MinerConfig.Data.Assert('rock_tier', EJSONType.INT) then
+    MinerConfig.Data.Item['rock_tier'].AsInt := RockTierCombo.ItemIndex
+  else
+    MinerConfig.Data.AddInt('rock_tier', RockTierCombo.ItemIndex);
+
+  if MinerConfig.Data.Assert('disposal_mode', EJSONType.INT) then
+    MinerConfig.Data.Item['disposal_mode'].AsInt := MineModeCombo.ItemIndex
+  else
+    MinerConfig.Data.AddInt('disposal_mode', MineModeCombo.ItemIndex);
+
+  if MinerConfig.Data.Assert('use_spec', EJSONType.BOOL) then
+    MinerConfig.Data.Item['use_spec'].AsBool := Miner.UseSpec
+  else
+    MinerConfig.Data.AddBool('use_spec', Miner.UseSpec);
+
+  if MinerConfig.Data.Assert('pre_hover', EJSONType.BOOL) then
+    MinerConfig.Data.Item['pre_hover'].AsBool := Miner.PreHoverNext
+  else
+    MinerConfig.Data.AddBool('pre_hover', Miner.PreHoverNext);
+
+  MinerConfig.Save();
+end;
+
+procedure TScriptForm.Init();
+var
+  tab: TLazTabSheet;
+  panel: TLazPanel;
+begin
+  MinerConfig.Setup('scripts' + PATH_SEP + 'dynamic-human-miner');
+  Self.Setup('Dynamic Human Miner & Rotator', MinerConfig.Data);
+
+  tab := Self.CreateTab('Miner Settings');
+  GoalsForm.Actions := @Miner.MaxActions;
+  GoalsForm.Time    := @Miner.MaxTime;
+  GoalsForm.Stats   := @Miner.LevelGoals;
+  panel := GoalsForm.Create(tab, True, True, True, EOrientation.HORIZONTAL);
+  panel.Align := ELazAlign.Bottom;
+
+  MineLocCombo := TLazComboBox.CreateEx(tab, 'Mining Region:', 'Select region to load', 24, 30, 230, 28);
+  MineLocCombo.Items.AddStrings([
+    'Varrock East Mine',
+    'Varrock West Mine',
+    'Al Kharid Mine',
+    'Falador / Mining Guild',
+    'Lumbridge / Draynor'
+  ]);
+  if MinerConfig.Data.Assert('location', EJSONType.INT) then
+    MineLocCombo.ItemIndex := MinerConfig.Data.Item['location'].AsInt
+  else
+    MineLocCombo.ItemIndex := 0;
+
+  RockTierCombo := TLazComboBox.CreateEx(tab, 'Rock Selection / Progression:', 'Progressive Auto adapts to your Mining level', 24, 95, 230, 28);
+  RockTierCombo.Items.AddStrings([
+    'Progressive Auto (By Mining Level)',
+    'Copper & Tin (Alternating)',
+    'Iron Rocks',
+    'Silver Rocks',
+    'Coal Rocks',
+    'Gold Rocks',
+    'Mithril Rocks',
+    'Adamantite Rocks'
+  ]);
+  if MinerConfig.Data.Assert('rock_tier', EJSONType.INT) then
+    RockTierCombo.ItemIndex := MinerConfig.Data.Item['rock_tier'].AsInt
+  else
+    RockTierCombo.ItemIndex := 0;
+
+  MineModeCombo := TLazComboBox.CreateEx(tab, 'Human Disposal & Gem Strategy:', 'Hybrid rotates banking and power-dropping', 24, 160, 260, 28);
+  MineModeCombo.Items.AddStrings([
+    'Hybrid Rotate (Bank Ores + Power-Drop)',
+    'Bank All Ores & Gems (Multi-Booth)',
+    'Power-Drop Ores (Keep Uncut Gems)'
+  ]);
+  if MinerConfig.Data.Assert('disposal_mode', EJSONType.INT) then
+    MineModeCombo.ItemIndex := MinerConfig.Data.Item['disposal_mode'].AsInt
+  else
+    MineModeCombo.ItemIndex := 0;
+
+  MineSpecCheck := TLazCheckBox.CreateEx(tab, 'Use Pickaxe Special Attack (Dragon / Infernal / Crystal)', 'Activates special attack with human delay', 24, 220);
+  if MinerConfig.Data.Assert('use_spec', EJSONType.BOOL) then
+    MineSpecCheck.Checked := MinerConfig.Data.Item['use_spec'].AsBool
+  else
+    MineSpecCheck.Checked := True;
+
+  MinePreHoverCheck := TLazCheckBox.CreateEx(tab, 'Focused Pre-Hovering & Micro-Movements', 'Occasionally pre-hovers while in FOCUSED attention state', 24, 255);
+  if MinerConfig.Data.Assert('pre_hover', EJSONType.BOOL) then
+    MinePreHoverCheck.Checked := MinerConfig.Data.Item['pre_hover'].AsBool
+  else
+    MinePreHoverCheck.Checked := True;
+
+  Self.CreateAntibanTab();
+  Self.CreateMiscTab();
+  Self.Run();
+end;
+
+begin
+  {$IFNDEF SIMBAHEADLESS}
+  MinerForm.Init();
+  {$ENDIF}
+  Miner.Run();
+end.

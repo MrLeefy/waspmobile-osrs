@@ -1,0 +1,25 @@
+{
+  "name": "Simba OSRS Swarm Command Center",
+  "short_name": "SimbaSwarm",
+  "description": "Autonomous Human-Indistinguishable OSRS Swarm Command Center & Process Orchestrator",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0f19",
+  "theme_color": "#0284c7",
+  "categories": ["utilities", "games"],
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192' width='192' height='192'%3E%3Crect width='192' height='192' rx='36' fill='%230b0f19'/%3E%3Ccircle cx='96' cy='96' r='70' fill='none' stroke='%230284c7' stroke-width='6' stroke-dasharray='12,8'/%3E%3Ccircle cx='96' cy='96' r='42' fill='%230369a1' fill-opacity='0.25' stroke='%2338bdf8' stroke-width='4'/%3E%3Ccircle cx='96' cy='96' r='14' fill='%2310b981'/%3E%3Cpath d='M96 26 L96 46 M96 146 L96 166 M26 96 L46 96 M146 96 L166 96' stroke='%2338bdf8' stroke-width='4'/%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512' width='512' height='512'%3E%3Crect width='512' height='512' rx='96' fill='%230b0f19'/%3E%3Ccircle cx='256' cy='256' r='180' fill='none' stroke='%230284c7' stroke-width='14' stroke-dasharray='28,18'/%3E%3Ccircle cx='256' cy='256' r='110' fill='%230369a1' fill-opacity='0.25' stroke='%2338bdf8' stroke-width='10'/%3E%3Ccircle cx='256' cy='256' r='36' fill='%2310b981'/%3E%3Cpath d='M256 76 L256 126 M256 386 L256 436 M76 256 L126 256 M386 256 L436 256' stroke='%2338bdf8' stroke-width='10'/%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

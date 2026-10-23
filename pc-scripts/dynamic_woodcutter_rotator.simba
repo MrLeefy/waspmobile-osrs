@@ -1,0 +1,715 @@
+(*
+# Dynamic Woodcutter & Multi-Skill Human Rotator (Simba 2.0 + WaspLib)
+Built on HumanCore v2 to emulate a genuine OSRS human player:
+  - Rotates between Woodcutting, Fletching (Knife), Firemaking (Tinderbox),
+    Banking, and Humanized Shift-Dropping so server telemetry never sees a
+    repetitive single-loop bot signature.
+  - Supports Dynamic Tree Progression (Tree -> Oak -> Willow -> Maple -> Yew)
+    or fixed tree selection across major regions.
+  - Uses Markov-Chain Attention States (FOCUSED, CASUAL, SECOND_MONITOR),
+    anti-Slot-28 inventory thresholds, and multi-booth bank selection.
+*)
+
+{$I WaspLib/main.simba}
+{$INCLUDE_ONCE human_core.simba}
+
+type
+  ELocationPreset = enum(
+    DRAYNOR_VILLAGE,
+    VARROCK_WEST,
+    VARROCK_EAST,
+    SEERS_VILLAGE,
+    EDGEVILLE
+  );
+
+  ETreeTier = enum(
+    PROGRESSIVE_AUTO,
+    REGULAR_TREE,
+    OAK_TREE,
+    WILLOW_TREE,
+    MAPLE_TREE,
+    YEW_TREE
+  );
+
+  EDisposalMode = enum(
+    HYBRID_HUMAN_ROTATE, // Dynamically mixes Banking, Fletching, Firemaking & Dropping
+    BANK_LOGS,           // Banks logs at random nearby booths
+    FLETCH_OR_DROP,      // Fletches logs with Knife (if present) + drops products
+    POWER_DROP           // Humanized shift-drop with anti-slot-28 variance
+  );
+
+  EActiveDisposal = enum(
+    ACT_BANK,
+    ACT_FLETCH,
+    ACT_BURN_AND_DROP,
+    ACT_DROP
+  );
+
+  ERotatorState = enum(
+    LOGIN,
+    LEVEL_UP,
+    CLOSE_INTERFACE,
+
+    OPEN_BANK,
+    DEPOSIT_ITEMS,
+
+    FLETCH_LOGS,
+    BURN_LOGS,
+    DROP_ITEMS,
+
+    USE_SPEC,
+    CHOP_TREE,
+    WAIT_CHOPPING,
+
+    NO_ACTIVITY, MAX_ACTIONS, MAX_TIME, MAX_LEVEL, END_SCRIPT
+  );
+
+  TDynamicRotator = record
+    Actions, MaxTime, MaxActions: UInt64;
+    LevelGoals: Boolean;
+
+    Location: ELocationPreset;
+    TreeTier: ETreeTier;
+    DisposalMode: EDisposalMode;
+    ActiveDisposal: EActiveDisposal;
+    UseSpec, PreHoverNext: Boolean;
+
+    CurrentTreeObjs: TObjectArray;
+    CurrentTreeName: String;
+    CurrentLogItem: TItem;
+
+    KeepTools: TItemArray;
+    DisposableItems: TItemArray;
+
+    InventoriesUntilRotate: Integer;
+    RotationTimer: TCountDown;
+    NextSpecThreshold: Integer;
+  end;
+
+var
+  Rotator: TDynamicRotator;
+  RotatorForm: TScriptForm;
+  RotatorConfig: TConfigJSON;
+
+  LocCombo, TreeCombo, ModeCombo: TLazComboBox;
+  SpecCheck, PreHoverCheck: TLazCheckBox;
+
+(*
+## Rotator.PickActiveDisposal
+When in HYBRID_HUMAN_ROTATE mode, rolls what the "human" feels like doing for
+the next 2-5 inventories (Banking, Fletching with Knife, Burning a few logs +
+Dropping, or Shift-Dropping).
+*)
+procedure TDynamicRotator.PickActiveDisposal();
+var
+  roll: Double;
+  hasKnife, hasTinder: Boolean;
+begin
+  Self.InventoriesUntilRotate := Biometrics.RandomModeInteger(3, 1, 6);
+
+  case Self.DisposalMode of
+    EDisposalMode.BANK_LOGS:
+      begin
+        Self.ActiveDisposal := EActiveDisposal.ACT_BANK;
+        Exit;
+      end;
+
+    EDisposalMode.FLETCH_OR_DROP:
+      begin
+        if Inventory.Items.Contains('Knife') then
+          Self.ActiveDisposal := EActiveDisposal.ACT_FLETCH
+        else
+          Self.ActiveDisposal := EActiveDisposal.ACT_DROP;
+        Exit;
+      end;
+
+    EDisposalMode.POWER_DROP:
+      begin
+        Self.ActiveDisposal := EActiveDisposal.ACT_DROP;
+        Exit;
+      end;
+  end;
+
+  // HYBRID_HUMAN_ROTATE: Mix banking, fletching, firemaking, and dropping
+  hasKnife  := Inventory.Items.Contains('Knife');
+  hasTinder := Inventory.Items.Contains('Tinderbox');
+  roll := Random();
+
+  if hasKnife and (roll < 0.30) then
+    Self.ActiveDisposal := EActiveDisposal.ACT_FLETCH
+  else if hasTinder and (roll < 0.45) then
+    Self.ActiveDisposal := EActiveDisposal.ACT_BURN_AND_DROP
+  else if roll < 0.78 then
+    Self.ActiveDisposal := EActiveDisposal.ACT_BANK
+  else
+    Self.ActiveDisposal := EActiveDisposal.ACT_DROP;
+
+  Logger.Info('Human Rotator switched disposal habit to: ' + ToStr(Self.ActiveDisposal) +
+              ' for next ' + ToStr(Self.InventoriesUntilRotate) + ' inventories.');
+end;
+
+(*
+## Rotator.SelectTreeForLevel
+Resolves which tree object and log name to target based on either the user's
+choice or live Woodcutting level (with occasional tier variation in Progressive mode).
+*)
+procedure TDynamicRotator.SelectTreeForLevel();
+var
+  wcLevel: Integer;
+  resolvedTier: ETreeTier;
+begin
+  resolvedTier := Self.TreeTier;
+
+  if resolvedTier = ETreeTier.PROGRESSIVE_AUTO then
+  begin
+    wcLevel := Stats.GetLevel(ESkill.WOODCUTTING);
+    if (wcLevel >= 60) and RandomBoolean(0.75) then
+      resolvedTier := ETreeTier.YEW_TREE
+    else if (wcLevel >= 45) and (Self.Location = ELocationPreset.SEERS_VILLAGE) then
+      resolvedTier := ETreeTier.MAPLE_TREE
+    else if (wcLevel >= 30) and RandomBoolean(0.85) then
+      resolvedTier := ETreeTier.WILLOW_TREE
+    else if wcLevel >= 15 then
+      resolvedTier := ETreeTier.OAK_TREE
+    else
+      resolvedTier := ETreeTier.REGULAR_TREE;
+  end;
+
+  case resolvedTier of
+    ETreeTier.REGULAR_TREE:
+      begin
+        Self.CurrentTreeName := 'Tree';
+        Self.CurrentLogItem  := 'Logs';
+      end;
+    ETreeTier.OAK_TREE:
+      begin
+        Self.CurrentTreeName := 'Oak tree';
+        Self.CurrentLogItem  := 'Oak logs';
+      end;
+    ETreeTier.WILLOW_TREE:
+      begin
+        Self.CurrentTreeName := 'Willow tree';
+        Self.CurrentLogItem  := 'Willow logs';
+      end;
+    ETreeTier.MAPLE_TREE:
+      begin
+        Self.CurrentTreeName := 'Maple tree';
+        Self.CurrentLogItem  := 'Maple logs';
+      end;
+    ETreeTier.YEW_TREE:
+      begin
+        Self.CurrentTreeName := 'Yew tree';
+        Self.CurrentLogItem  := 'Yew logs';
+      end;
+  end;
+
+  Self.CurrentTreeObjs := Human.LoadObjectsByName(Self.CurrentTreeName);
+  if Self.CurrentTreeObjs = [] then
+  begin
+    Logger.Warn(Self.CurrentTreeName + ' not found in loaded map chunk, falling back to Oak tree / Tree.');
+    Self.CurrentTreeObjs := Human.LoadObjectsByName('Oak tree');
+    if Self.CurrentTreeObjs <> [] then
+    begin
+      Self.CurrentTreeName := 'Oak tree';
+      Self.CurrentLogItem  := 'Oak logs';
+    end
+    else
+    begin
+      Self.CurrentTreeObjs := Human.LoadObjectsByName('Tree');
+      Self.CurrentTreeName := 'Tree';
+      Self.CurrentLogItem  := 'Logs';
+    end;
+  end;
+
+  Self.RotationTimer.Start(Biometrics.RandomModeInteger(38, 25, 65) * MINUTE);
+  Logger.Info('Targeting tree: ' + Self.CurrentTreeName + ' (' + ToStr(Length(Self.CurrentTreeObjs)) + ' ID variants loaded)');
+end;
+
+procedure TDynamicRotator.SetupRegion();
+begin
+  case Self.Location of
+    ELocationPreset.DRAYNOR_VILLAGE: Human.SetupConnectedRegion([EChunk.DRAYNOR_VILLAGE]);
+    ELocationPreset.VARROCK_WEST,
+    ELocationPreset.VARROCK_EAST:    Human.SetupConnectedRegion([EChunk.VARROCK]);
+    ELocationPreset.SEERS_VILLAGE:   Human.SetupConnectedRegion([EChunk.SEERS_VILLAGE]);
+    ELocationPreset.EDGEVILLE:       Human.SetupConnectedRegion([EChunk.EDGEVILLE]);
+  end;
+end;
+
+function TDynamicRotator.GetReportValues(): TStringArray;
+var
+  actionsStr, sleepInfo: String;
+  xp: UInt64;
+begin
+  actionsStr := ToStr(Self.Actions);
+  if Self.MaxActions <> 0 then
+    actionsStr += '/' + ToStr(Self.MaxActions);
+
+  if Antiban.Sleeps = [] then
+    sleepInfo := 'No sleep'
+  else
+    sleepInfo := Antiban.TimeUntilSleep(Antiban.Sleeps.First, TIME_SHORT);
+
+  xp := XPBar.TotalEarnedXP(False);
+  Result := [
+    GetTimeStamp(TIME_SHORT),
+    Logger.TimeRunning.ElapsedFmt(TIME_SHORT),
+    Antiban.TimeRunning.ElapsedFmt(TIME_SHORT),
+    sleepInfo,
+    ToStr(Human.Attention) + ' / ' + ToStr(Self.ActiveDisposal),
+    actionsStr,
+    FormatNumber(Self.Actions / Max(1, Logger.TimeRunning.Elapsed) * HOUR),
+    FormatNumber(xp),
+    FormatNumber(xp / Max(1, Logger.TimeRunning.Elapsed) * HOUR)
+  ];
+end;
+
+procedure TDynamicRotator.Init();
+begin
+  Logger.Setup('Dynamic Human Woodcutter');
+  ProgressReport.Setup(
+    'Dynamic Human Woodcutter',
+    [
+      'Script runtime:', 'Botting runtime:', 'Antiban runtime:', 'Next sleep:',
+      'Attention / Mode:', 'Logs/Inventories:', 'Actions/H:', 'Total XP:', 'XP/H:'
+    ],
+    @Self.GetReportValues
+  );
+
+  Human.Setup(
+    [ESkill.WOODCUTTING, ESkill.FLETCHING, ESkill.FIREMAKING, ESkill.TOTAL],
+    22, 62
+  );
+
+  if not Client.IsLoggedIn() then
+    Login.DoLogin();
+
+  StartListeners(300);
+
+  Self.KeepTools := [
+    'Knife', 'Tinderbox', 'Law rune', 'Air rune', 'Fire rune', 'Earth rune', 'Water rune',
+    'Varrock teleport', 'Falador teleport', 'Lumbridge teleport', 'Camelot teleport',
+    'Bronze axe', 'Iron axe', 'Steel axe', 'Black axe', 'Mithril axe',
+    'Adamant axe', 'Rune axe', 'Gilded axe', 'Dragon axe', 'Infernal axe',
+    'Crystal axe', '3rd age axe',
+    'Bronze felling axe', 'Iron felling axe', 'Steel felling axe',
+    'Black felling axe', 'Mithril felling axe', 'Adamant felling axe',
+    'Rune felling axe', 'Dragon felling axe', 'Crystal felling axe'
+  ];
+
+  Self.DisposableItems := [
+    'Logs', 'Oak logs', 'Willow logs', 'Teak logs', 'Maple logs',
+    'Mahogany logs', 'Yew logs', 'Magic logs',
+    'Arrow shaft', 'Shortbow (u)', 'Longbow (u)',
+    'Oak shortbow (u)', 'Oak longbow (u)',
+    'Willow shortbow (u)', 'Willow longbow (u)',
+    'Maple shortbow (u)', 'Maple longbow (u)',
+    'Yew shortbow (u)', 'Yew longbow (u)'
+  ];
+
+  Self.NextSpecThreshold := 100;
+  Self.SetupRegion();
+  Human.EnsureTools(True, False, Self.DisposalMode <> EDisposalMode.POWER_DROP, False);
+  Self.SelectTreeForLevel();
+  Self.PickActiveDisposal();
+  Activity.Restart();
+end;
+
+(*
+## Rotator.IsChopping
+Checks whether the player is actively chopping by watching pixel movement around the character center.
+*)
+function TDynamicRotator.IsChopping(): Boolean;
+var
+  playerBox: TBox;
+begin
+  playerBox := TBox.Create(MainScreen.Center, 32, 36);
+  Result := Target.GetPixelDifference(350, playerBox).Length >= 35;
+end;
+
+(*
+## Rotator.WaitChopping
+Waits while the character is chopping the tree.
+- When FOCUSED and PreHoverNext is enabled, occasionally hovers the inventory
+  or a nearby tree cluster.
+- When the tree depletes or inventory reaches Human.InventoryLimit, applies
+  Human.ActionFinishDelay() (modeling real human recognition latency).
+*)
+procedure TDynamicRotator.WaitChopping();
+var
+  timeout: TCountDown;
+  didPreHover: Boolean;
+  earned: Boolean;
+begin
+  timeout.Start(Biometrics.RandomModeInteger(14000, 9000, 24000));
+
+  repeat
+    earned := XPBar.EarnedXP();
+    if earned then
+    begin
+      Inc(Self.Actions);
+      timeout.Restart(0, 4000);
+      if Inventory.Slots.Count() >= Human.InventoryLimit then
+        Break;
+    end;
+
+    if Chat.LeveledUp() then
+      Exit;
+
+    // Spot and loot bird's nests that fall out of the tree like a real player
+    if Human.CheckAndPickupNest() then
+    begin
+      if Inventory.Slots.Count() >= Human.InventoryLimit then
+        Break;
+      Break;
+    end;
+
+    // Occasional focused human pre-hovering while waiting on the tree
+    if Self.PreHoverNext and (not didPreHover) and
+       (Human.Attention = EAttentionState.FOCUSED) and RandomBoolean(0.08) then
+    begin
+      didPreHover := True;
+      Antiban.SmallRandomMouse();
+    end;
+
+    Antiban.DoAntiban(True, False, False);
+    Human.CheckAndReplyChat('woodcutting');
+    Human.SyncSwarm('Dynamic Woodcutter', 'CHOPPING (' + Self.CurrentTreeName + ')', Self.Actions);
+    Sleep(250, 550);
+  until timeout.IsFinished or ((not earned) and (not Self.IsChopping()));
+
+  Human.ActionFinishDelay();
+end;
+
+procedure TDynamicRotator.DoFletchLogs();
+var
+  timeout: TCountDown;
+begin
+  if not Inventory.Items.Contains('Knife') then
+  begin
+    Self.ActiveDisposal := EActiveDisposal.ACT_DROP;
+    Exit;
+  end;
+
+  Human.ReactDelay(220, 720);
+  if Inventory.Combine('Knife', Self.CurrentLogItem) and Make.WaitOpen(4 * TICK) then
+  begin
+    Human.ReactDelay(250, 680);
+    // Select first fletching option (Arrow shafts or Shortbow (u))
+    if Make.Select(0, QUANTITY_ALL) then
+    begin
+      timeout.Start(45000);
+      repeat
+        if XPBar.EarnedXP() then
+          timeout.Restart(0, 3000);
+        if Chat.LeveledUp() then
+          Break;
+        Sleep(300, 650);
+      until timeout.IsFinished or (not Inventory.Items.Contains(Self.CurrentLogItem));
+
+      Human.ActionFinishDelay();
+    end;
+  end;
+
+  // Drop any unstrung bows if inventory still has non-stackable products
+  if Inventory.Slots.Count() >= Human.InventoryLimit then
+    Human.HumanizedDrop(Self.DisposableItems);
+
+  Dec(Self.InventoriesUntilRotate);
+  if Self.InventoriesUntilRotate <= 0 then
+    Self.PickActiveDisposal();
+  Human.RollInventoryLimit();
+end;
+
+procedure TDynamicRotator.DoBurnSomeLogs();
+var
+  burns, i: Integer;
+begin
+  if not Inventory.Items.Contains('Tinderbox') then
+  begin
+    Self.ActiveDisposal := EActiveDisposal.ACT_DROP;
+    Exit;
+  end;
+
+  // Burn 2-5 logs for Firemaking XP, then drop or bank the rest so we don't get stuck on blocked tiles
+  burns := Biometrics.RandomModeInteger(3, 2, 5);
+  for i := 1 to burns do
+  begin
+    if not Inventory.Items.Contains(Self.CurrentLogItem) then
+      Break;
+
+    Human.ReactDelay(220, 650);
+    if Inventory.Combine('Tinderbox', Self.CurrentLogItem) then
+    begin
+      XPBar.WaitXP(6 * TICK);
+      Minimap.WaitMoving(4000);
+    end;
+  end;
+
+  Human.HumanizedDrop(Self.DisposableItems);
+  Dec(Self.InventoriesUntilRotate);
+  if Self.InventoriesUntilRotate <= 0 then
+    Self.PickActiveDisposal();
+end;
+
+function TDynamicRotator.GetState(): ERotatorState;
+var
+  usedSlots: Integer;
+begin
+  if Activity.IsFinished then
+    Exit(ERotatorState.NO_ACTIVITY);
+
+  if (Self.MaxActions > 0) and (Self.Actions >= Self.MaxActions) then
+    Exit(ERotatorState.MAX_ACTIONS);
+
+  if (Self.MaxTime > 0) and (Logger.TimeRunning.Elapsed >= Self.MaxTime) then
+    Exit(ERotatorState.MAX_TIME);
+
+  if Self.LevelGoals and Stats.AnyGoalsCompleted() then
+    Exit(ERotatorState.MAX_LEVEL);
+
+  if not Client.IsLoggedIn() then
+    Exit(ERotatorState.LOGIN);
+
+  if Chat.LeveledUp() then
+    Exit(ERotatorState.LEVEL_UP);
+
+  if (Self.TreeTier = ETreeTier.PROGRESSIVE_AUTO) and Self.RotationTimer.IsFinished then
+    Self.SelectTreeForLevel();
+
+  if Bank.IsOpen() then
+  begin
+    if Inventory.Items.ContainsAny(Self.DisposableItems) then
+      Exit(ERotatorState.DEPOSIT_ITEMS);
+    Exit(ERotatorState.CLOSE_INTERFACE);
+  end;
+
+  usedSlots := Inventory.Slots.Count();
+  if usedSlots >= Human.InventoryLimit then
+  begin
+    case Self.ActiveDisposal of
+      EActiveDisposal.ACT_BANK:          Exit(ERotatorState.OPEN_BANK);
+      EActiveDisposal.ACT_FLETCH:        Exit(ERotatorState.FLETCH_LOGS);
+      EActiveDisposal.ACT_BURN_AND_DROP: Exit(ERotatorState.BURN_LOGS);
+      EActiveDisposal.ACT_DROP:          Exit(ERotatorState.DROP_ITEMS);
+    end;
+  end;
+
+  if Self.UseSpec and (not Minimap.SpecialEnabled()) and Minimap.HasSpecial() and
+     (Minimap.GetSpecLevel() >= Self.NextSpecThreshold) then
+    Exit(ERotatorState.USE_SPEC);
+
+  Result := ERotatorState.CHOP_TREE;
+end;
+
+function TDynamicRotator.CheckCrowdAndHop(maxPlayersAllowed: Integer = 3): Boolean;
+begin
+  if (Profiles = []) or (not InRange(ProfileIndex, 0, High(Profiles))) or
+     (Length(Profiles[ProfileIndex].Worlds) <= 1) then
+    Exit(False);
+  Result := Human.CheckCrowdAndHop(maxPlayersAllowed);
+end;
+
+procedure TDynamicRotator.Run();
+var
+  state: ERotatorState;
+begin
+  Self.Init();
+
+  repeat
+    state := Self.GetState();
+    Logger.Info('State: ' + ToStr(state) + ' | Attention: ' + ToStr(Human.Attention));
+    Human.SyncSwarm('Dynamic Woodcutter', ToStr(state).After('ERotatorState.') + ' (' + Self.CurrentTreeName + ')', Self.Actions);
+    Human.CheckAndReplyChat('woodcutting');
+    ProgressReport.Print();
+
+    case state of
+      ERotatorState.LOGIN:
+        Login.DoLogin();
+
+      ERotatorState.LEVEL_UP:
+        begin
+          Human.ReactDelay(350, 1200);
+          Chat.HandleLevelUp();
+        end;
+
+      ERotatorState.CLOSE_INTERFACE:
+        begin
+          Human.ReactDelay(200, 600);
+          MSInterface.Close();
+        end;
+
+      ERotatorState.OPEN_BANK:
+        Human.OpenBank();
+
+      ERotatorState.DEPOSIT_ITEMS:
+        if Human.DepositItems(Self.KeepTools) then
+        begin
+          Dec(Self.InventoriesUntilRotate);
+          if Self.InventoriesUntilRotate <= 0 then
+            Self.PickActiveDisposal();
+          Human.RollInventoryLimit();
+          if RandomBoolean(0.65) then
+            Bank.Close();
+        end;
+
+      ERotatorState.FLETCH_LOGS:
+        Self.DoFletchLogs();
+
+      ERotatorState.BURN_LOGS:
+        Self.DoBurnSomeLogs();
+
+      ERotatorState.DROP_ITEMS:
+        begin
+          Human.HumanizedDrop(Self.DisposableItems);
+          Dec(Self.InventoriesUntilRotate);
+          if Self.InventoriesUntilRotate <= 0 then
+            Self.PickActiveDisposal();
+        end;
+
+      ERotatorState.USE_SPEC:
+        begin
+          Human.ReactDelay(250, 850);
+          Minimap.EnableSpecial(100);
+        end;
+
+      ERotatorState.CHOP_TREE:
+        begin
+          Self.CheckCrowdAndHop(3);
+          Human.ReactDelay(180, 620);
+          if Human.WalkClickAny(Self.CurrentTreeObjs) then
+          begin
+            Minimap.WaitMoving();
+            Self.WaitChopping();
+          end
+          else
+            Biometrics.Sleep(600, 1600, ERandomDir.LEFT);
+        end;
+
+      ERotatorState.NO_ACTIVITY, ERotatorState.MAX_ACTIONS,
+      ERotatorState.MAX_TIME, ERotatorState.MAX_LEVEL,
+      ERotatorState.END_SCRIPT:
+        Break;
+    end;
+
+    Antiban.DoAntiban();
+  until False;
+
+  Logger.Info('Session complete. Stay human!');
+end;
+
+procedure TScriptForm.OnStart(sender: TLazObject); override;
+begin
+  inherited();
+
+  Rotator.Location     := ELocationPreset(LocCombo.ItemIndex);
+  Rotator.TreeTier     := ETreeTier(TreeCombo.ItemIndex);
+  Rotator.DisposalMode := EDisposalMode(ModeCombo.ItemIndex);
+  Rotator.UseSpec      := SpecCheck.Checked;
+  Rotator.PreHoverNext := PreHoverCheck.Checked;
+
+  if RotatorConfig.Data.Assert('location', EJSONType.INT) then
+    RotatorConfig.Data.Item['location'].AsInt := LocCombo.ItemIndex
+  else
+    RotatorConfig.Data.AddInt('location', LocCombo.ItemIndex);
+
+  if RotatorConfig.Data.Assert('tree_tier', EJSONType.INT) then
+    RotatorConfig.Data.Item['tree_tier'].AsInt := TreeCombo.ItemIndex
+  else
+    RotatorConfig.Data.AddInt('tree_tier', TreeCombo.ItemIndex);
+
+  if RotatorConfig.Data.Assert('disposal_mode', EJSONType.INT) then
+    RotatorConfig.Data.Item['disposal_mode'].AsInt := ModeCombo.ItemIndex
+  else
+    RotatorConfig.Data.AddInt('disposal_mode', ModeCombo.ItemIndex);
+
+  if RotatorConfig.Data.Assert('use_spec', EJSONType.BOOL) then
+    RotatorConfig.Data.Item['use_spec'].AsBool := Rotator.UseSpec
+  else
+    RotatorConfig.Data.AddBool('use_spec', Rotator.UseSpec);
+
+  if RotatorConfig.Data.Assert('pre_hover', EJSONType.BOOL) then
+    RotatorConfig.Data.Item['pre_hover'].AsBool := Rotator.PreHoverNext
+  else
+    RotatorConfig.Data.AddBool('pre_hover', Rotator.PreHoverNext);
+
+  RotatorConfig.Save();
+end;
+
+procedure TScriptForm.Init();
+var
+  tab: TLazTabSheet;
+  panel: TLazPanel;
+begin
+  RotatorConfig.Setup('scripts' + PATH_SEP + 'dynamic-human-woodcutter');
+  Self.Setup('Dynamic Human Woodcutter & Rotator', RotatorConfig.Data);
+
+  tab := Self.CreateTab('Rotator Settings');
+  GoalsForm.Actions := @Rotator.MaxActions;
+  GoalsForm.Time    := @Rotator.MaxTime;
+  GoalsForm.Stats   := @Rotator.LevelGoals;
+  panel := GoalsForm.Create(tab, True, True, True, EOrientation.HORIZONTAL);
+  panel.Align := ELazAlign.Bottom;
+
+  LocCombo := TLazComboBox.CreateEx(tab, 'Region / Location:', 'Select region to load', 24, 30, 220, 28);
+  LocCombo.Items.AddStrings([
+    'Draynor Village',
+    'Varrock West',
+    'Varrock East',
+    'Seers'' Village',
+    'Edgeville'
+  ]);
+  if RotatorConfig.Data.Assert('location', EJSONType.INT) then
+    LocCombo.ItemIndex := RotatorConfig.Data.Item['location'].AsInt
+  else
+    LocCombo.ItemIndex := 0;
+
+  TreeCombo := TLazComboBox.CreateEx(tab, 'Tree Selection / Progression:', 'Progressive Auto adapts to your WC level', 24, 95, 220, 28);
+  TreeCombo.Items.AddStrings([
+    'Progressive Auto (By WC Level)',
+    'Regular Tree',
+    'Oak Tree',
+    'Willow Tree',
+    'Maple Tree',
+    'Yew Tree'
+  ]);
+  if RotatorConfig.Data.Assert('tree_tier', EJSONType.INT) then
+    TreeCombo.ItemIndex := RotatorConfig.Data.Item['tree_tier'].AsInt
+  else
+    TreeCombo.ItemIndex := 0;
+
+  ModeCombo := TLazComboBox.CreateEx(tab, 'Human Disposal / Skill Rotation:', 'Hybrid mode rotates Banking, Fletching, Burning & Dropping', 24, 160, 260, 28);
+  ModeCombo.Items.AddStrings([
+    'Hybrid Human Rotate (Bank + Fletch + Burn + Drop)',
+    'Bank Logs (Multi-Booth Humanized)',
+    'Fletch with Knife or Drop',
+    'Power Drop (Anti-Slot-28 + Random Patterns)'
+  ]);
+  if RotatorConfig.Data.Assert('disposal_mode', EJSONType.INT) then
+    ModeCombo.ItemIndex := RotatorConfig.Data.Item['disposal_mode'].AsInt
+  else
+    ModeCombo.ItemIndex := 0;
+
+  SpecCheck := TLazCheckBox.CreateEx(tab, 'Use Axe Special Attack (Dragon / Infernal / Crystal)', 'Activates special attack with human delay', 24, 220);
+  if RotatorConfig.Data.Assert('use_spec', EJSONType.BOOL) then
+    SpecCheck.Checked := RotatorConfig.Data.Item['use_spec'].AsBool
+  else
+    SpecCheck.Checked := True;
+
+  PreHoverCheck := TLazCheckBox.CreateEx(tab, 'Focused Pre-Hovering & Micro-Movements', 'Occasionally pre-hovers while in FOCUSED attention state', 24, 255);
+  if RotatorConfig.Data.Assert('pre_hover', EJSONType.BOOL) then
+    PreHoverCheck.Checked := RotatorConfig.Data.Item['pre_hover'].AsBool
+  else
+    PreHoverCheck.Checked := True;
+
+  Self.CreateAntibanTab();
+  Self.CreateMiscTab();
+  Self.Run();
+end;
+
+begin
+  {$IFNDEF SIMBAHEADLESS}
+  RotatorForm.Init();
+  {$ENDIF}
+  Rotator.Run();
+end.
