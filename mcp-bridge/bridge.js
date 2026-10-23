@@ -30,7 +30,6 @@ const REQUEST_MS = 14000;
 const clients = new Map();
 const pending = new Map();
 const queues = new Map();
-let shutdownRequested = false;
 
 function deviceSummary(device) {
   return {
@@ -268,7 +267,7 @@ async function handleTool(name,input) {
       return failResult('Invalid deviceId');
     if(name==='wasp_observe'){
       const r=await requestDevice(a.deviceId,'OBSERVE',{});
-      return !r.ok?failResult(r.error || 'capture failed'):currentFrame(a.deviceId);
+      return !r.ok || !r.hasFrame ? failResult(r.error || 'Fresh capture returned no image') : currentFrame(a.deviceId);
     }
     if(name==='wasp_last_frame') return currentFrame(a.deviceId);
     if(name==='wasp_tap'){
@@ -336,7 +335,6 @@ if(require.main===module){
   if(DEVICE_TOKEN.length<32 || !Number.isInteger(PORT) || PORT<1 || PORT>65535){
     process.stderr.write('WASP_DEVICE_TOKEN must be at least 32 characters and WASP_BRIDGE_PORT must be valid.\n');
     process.exitCode=1;
-    shutdownRequested=true;
     protocol.close();
   }else{
     server.listen(PORT,'127.0.0.1',()=>process.stderr.write('Wasp MCP phone relay listening on 127.0.0.1:'+PORT+'\n'));
