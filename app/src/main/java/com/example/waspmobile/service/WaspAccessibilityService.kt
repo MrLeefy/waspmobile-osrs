@@ -49,6 +49,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.ByteArrayOutputStream
+import android.util.Base64
+import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -69,6 +72,19 @@ class WaspAccessibilityService : AccessibilityService() {
         fun closeOverlayAndDisableService() {
             instance?.shutdownAndDisable()
         }
+
+        /** User-initiated only. Never automatically enables remote control on reboot. */
+        fun setMcpRemoteEnabled(enabled: Boolean): Boolean {
+            val svc = instance ?: return false
+            return if (enabled) {
+                svc.phoneMcpBridge?.start() == true
+            } else {
+                svc.phoneMcpBridge?.stop()
+                true
+            }
+        }
+
+        fun isMcpRemoteEnabled(): Boolean = instance?.phoneMcpBridge?.enabled == true
     }
 
     private lateinit var windowManager: WindowManager
@@ -87,6 +103,14 @@ class WaspAccessibilityService : AccessibilityService() {
 
     private val touchEngine = HumanTouchEngine()
     private val visionEngine = MobileVisionEngine()
+    private var phoneMcpBridge: PhoneMcpBridge? = null
+
+    @Volatile
+    internal var currentForegroundPackage: String = ""
+        private set
+
+    internal fun remoteScreenWidth(): Int = getPhysicalScreenBounds().width()
+    internal fun remoteScreenHeight(): Int = getPhysicalScreenBounds().height()
 
     @Volatile
     private var suppressCanvasDrawing = false
@@ -124,6 +148,8 @@ class WaspAccessibilityService : AccessibilityService() {
         setupFloatingControlPill()
         setupDisplayListener()
 
+        phoneMcpBridge = PhoneMcpBridge(this, serviceScope, ::executeRemoteMcpCommand)
+
         serviceScope.launch {
             WaspMobileState.state.collect { state ->
                 updateOverlayFromState(state.isRunning, state.calibrationMode)
@@ -145,14 +171,22 @@ class WaspAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Vision + gesture loop runs on coroutine timer; accessibility event IPC kept minimal
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val activePackage = event.packageName?.toString()
+            if (!activePackage.isNullOrBlank() && activePackage != packageName) {
+                currentForegroundPackage = activePackage
+            }
+        }
     }
 
     override fun onInterrupt() {
+        phoneMcpBridge?.stop()
         stopBotLoop()
     }
 
     override fun onDestroy() {
+        phoneMcpBridge?.stop()
+        phoneMcpBridge = null
         stopBotLoop()
         instance = null
         displayListener?.let {
@@ -172,6 +206,8 @@ class WaspAccessibilityService : AccessibilityService() {
     }
 
     fun shutdownAndDisable() {
+        phoneMcpBridge?.stop()
+        phoneMcpBridge = null
         stopBotLoop()
         displayListener?.let {
             val dm = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
@@ -895,6 +931,81 @@ class WaspAccessibilityService : AccessibilityService() {
             )
         }
         mainHandler.post { canvasOverlayView?.invalidate() }
+    }
+
+    /**
+     * A single bounded phone-side action from the locally enabled MCP bridge.
+     * The LLM does not access Android APIs directly; the service re-checks foreground,
+     * running-script ownership, calibration, bounds and the Android gesture result.
+     */
+    private suspend fun executeRemoteMcpCommand(type: String, params: JSONObject): JSONObject {
+        if (type == "PAUSE") {
+            stopBotLoop()
+            return JSONObject().put("ok", true).put("status", "LOCAL_AUTOMATION_PAUSED")
+        }
+        if (currentForegroundPackage != "com.jagex.oldscape.android") {
+            return JSONObject().put("ok", false).put("error", "OSRS is not confirmed foreground")
+        }
+        val activeState = WaspMobileState.state.value
+        if (activeState.isRunning || activeState.calibrationMode != CalibrationMode.NONE) {
+            return JSONObject().put("ok", false)
+                .put("error", "Pause the local script and exit calibration first")
+        }
+        return when (type) {
+            "OBSERVE" -> {
+                val bmp = captureScreenBitmap()
+                    ?: return JSONObject().put("ok", false).put("error", "Screenshot unavailable")
+                try {
+                    val scaled = if (bmp.width > 1024) {
+                        Bitmap.createScaledBitmap(
+                            bmp, 1024, (bmp.height * 1024f / bmp.width).toInt().coerceAtLeast(1), true
+                        )
+                    } else bmp
+                    try {
+                        val stream = ByteArrayOutputStream()
+                        val success = scaled.compress(Bitmap.CompressFormat.JPEG, 68, stream)
+                        val bytes = stream.toByteArray()
+                        if (!success || bytes.size > 650000) {
+                            JSONObject().put("ok", false).put("error", "Screenshot encoding failed or too large")
+                        } else {
+                            JSONObject().put("ok", true).put("status", "FRAME_CAPTURED")
+                                .put("frame", Base64.encodeToString(bytes, Base64.NO_WRAP))
+                        }
+                    } finally {
+                        if (scaled !== bmp) scaled.recycle()
+                    }
+                } finally {
+                    if (!bmp.isRecycled) bmp.recycle()
+                }
+            }
+            "TAP" -> {
+                val xNorm = params.optDouble("x", Double.NaN)
+                val yNorm = params.optDouble("y", Double.NaN)
+                if (!xNorm.isFinite() || !yNorm.isFinite() ||
+                    xNorm !in 0.02..0.98 || yNorm !in 0.02..0.98
+                ) {
+                    return JSONObject().put("ok", false).put("error", "Invalid normalized tap coordinates")
+                }
+                val screen = getPhysicalScreenBounds()
+                val x = (xNorm * screen.width()).toInt()
+                val y = (yNorm * screen.height()).toInt()
+                val tapBox = Rect(
+                    (x - 8).coerceAtLeast(2), (y - 8).coerceAtLeast(2),
+                    (x + 8).coerceAtMost(screen.width() - 2),
+                    (y + 8).coerceAtMost(screen.height() - 2)
+                )
+                if (tapBox.right <= tapBox.left || tapBox.bottom <= tapBox.top) {
+                    return JSONObject().put("ok", false).put("error", "Tap box outside display")
+                }
+                if (currentForegroundPackage != "com.jagex.oldscape.android") {
+                    return JSONObject().put("ok", false).put("error", "Game window changed")
+                }
+                val accepted = touchEngine.dispatchHumanTap(this, tapBox, screen)
+                JSONObject().put("ok", accepted)
+                    .put("status", if (accepted) "GESTURE_DISPATCHED" else "GESTURE_CANCELLED_OR_TIMEOUT")
+            }
+            else -> JSONObject().put("ok", false).put("error", "Unsupported remote operation")
+        }
     }
 
     /**
