@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -34,10 +35,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -50,6 +56,7 @@ import com.example.waspmobile.engine.TargetColorPreset
 import com.example.waspmobile.engine.WaspMobileState
 import com.example.waspmobile.engine.WaspScriptMode
 import com.example.waspmobile.service.StoreInstallResultReceiver
+import com.example.waspmobile.service.PhoneMcpBridge
 import com.example.waspmobile.service.WaspAccessibilityService
 import com.example.waspmobile.theme.WaspMobileTheme
 
@@ -68,6 +75,9 @@ fun MainScreen(
     val telemetry by WaspMobileState.state.collectAsState()
     val context = LocalContext.current
     val scroll = rememberScrollState()
+    var mcpUrl by remember { mutableStateOf(PhoneMcpBridge.savedUrl(context)) }
+    var mcpTokenInput by remember { mutableStateOf("") }
+    var mcpEnabled by remember { mutableStateOf(WaspAccessibilityService.isMcpRemoteEnabled()) }
 
     LaunchedEffect(Unit) {
         WaspMobileState.loadPrefs(context)
@@ -214,6 +224,77 @@ fun MainScreen(
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp
+                )
+            }
+        }
+
+        // Opt-in AI control over an authenticated HTTPS phone-to-PC bridge.
+        // Disabling the Accessibility service also cancels the remote poller.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF0F172A), RoundedCornerShape(14.dp))
+                .border(1.dp, Color(0xFF334155), RoundedCornerShape(14.dp))
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "MCP PHONE BRIDGE (EXPERIMENTAL)",
+                color = Color(0xFF38BDF8),
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp
+            )
+            Text(
+                text = "Manual opt-in each service session. Screenshots may be sent to your private PC bridge. " +
+                    "Use an HTTPS Tailscale Serve URL and a private 32+ character token. " +
+                    "Pause local scripts before remote taps.",
+                color = Color(0xFFCBD5E1),
+                fontSize = 11.sp
+            )
+            OutlinedTextField(
+                value = mcpUrl,
+                onValueChange = { mcpUrl = it },
+                label = { Text("HTTPS bridge URL", color = Color(0xFF94A3B8)) },
+                singleLine = true,
+                textStyle = TextStyle(color = Color.White),
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = mcpTokenInput,
+                onValueChange = { mcpTokenInput = it },
+                label = { Text("Bridge token (blank keeps saved token)", color = Color(0xFF94A3B8)) },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+                textStyle = TextStyle(color = Color.White),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(
+                onClick = {
+                    if (mcpEnabled) {
+                        WaspAccessibilityService.setMcpRemoteEnabled(false)
+                        mcpEnabled = false
+                    } else {
+                        val valid = PhoneMcpBridge.save(context, mcpUrl, mcpTokenInput)
+                        val started = valid && WaspAccessibilityService.setMcpRemoteEnabled(true)
+                        mcpEnabled = started
+                        mcpTokenInput = ""
+                        Toast.makeText(
+                            context,
+                            if (started) "MCP phone bridge enabled for this service session"
+                            else "Could not start: enable Accessibility, enter HTTPS URL + token",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (mcpEnabled) Color(0xFFDC2626) else Color(0xFF0369A1)
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    if (mcpEnabled) "Disconnect MCP Remote Control"
+                    else "Connect MCP Remote Control",
+                    color = Color.White
                 )
             }
         }
