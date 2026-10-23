@@ -30,6 +30,7 @@ const REQUEST_MS = 14000;
 const clients = new Map();
 const pending = new Map();
 const queues = new Map();
+const knownPcHandles = new Map();
 
 function deviceSummary(device) {
   return {
@@ -188,6 +189,8 @@ function currentFrame(id) {
 
 const TOOLS = [
   {name:'wasp_devices',description:'List authenticated Android device sessions and health.',inputSchema:{type:'object',properties:{}}},
+  {name:'wasp_pc_clients',description:'Discover currently open desktop clients using the official installed WaspLib find_client helper.',inputSchema:{type:'object',properties:{}}},
+  {name:'wasp_pc_probe',description:'Run a fixed READ-ONLY WaspLib probe for a recently discovered client handle; never sends input.',inputSchema:{type:'object',properties:{handle:{type:'string'}},required:['handle']}},
   {name:'wasp_observe',description:'Capture a current screenshot from the phone. Requires OSRS foreground and opt-in remote control.',inputSchema:{type:'object',properties:{deviceId:{type:'string'}},required:['deviceId']}},
   {name:'wasp_last_frame',description:'Read the latest captured screenshot, including its age.',inputSchema:{type:'object',properties:{deviceId:{type:'string'}},required:['deviceId']}},
   {name:'wasp_tap',description:'Tap one normalized display point (0 to 1), with local Android foreground checks; game actions are not guaranteed.',inputSchema:{type:'object',properties:{deviceId:{type:'string'},x:{type:'number',minimum:0.02,maximum:0.98},y:{type:'number',minimum:0.02,maximum:0.98}},required:['deviceId','x','y']}},
@@ -233,6 +236,62 @@ function findSources(query) {
   return {matches:found,filesExamined:examined,truncated:found.length===30 || examined===2500};
 }
 
+function runSimba(args,timeoutMs=15000) {
+  if (!fs.existsSync(SIMBA_EXE)) return Promise.reject(new Error('Simba.exe not found; configure WASP_SIMBA_EXE'));
+  return new Promise((resolve,reject)=>{
+    const child = spawn(SIMBA_EXE,args,{
+      cwd:path.dirname(SIMBA_EXE),windowsHide:true,stdio:['ignore','pipe','pipe']
+    });
+    let stdout='',stderr='',finished=false;
+    const timer=setTimeout(()=>{child.kill();if(!finished){finished=true;reject(new Error('Simba command timed out'));}},timeoutMs);
+    child.stdout.on('data',d=>{stdout=(stdout+d.toString()).slice(-18000);});
+    child.stderr.on('data',d=>{stderr=(stderr+d.toString()).slice(-18000);});
+    child.on('error',e=>{if(finished)return;finished=true;clearTimeout(timer);reject(e);});
+    child.on('close',(code,signal)=>{
+      if(finished)return;finished=true;clearTimeout(timer);
+      resolve({exitCode:code,signal,stdout,stderr});
+    });
+  });
+}
+
+async function findPcClients(){
+  const finder=path.join(LIB_ROOT,'tools','agents','find_client.simba');
+  if(!fs.existsSync(finder))throw new Error('Installed WaspLib find_client.simba not found');
+  const result=await runSimba(['--run',finder],15000);
+  if(result.exitCode!==0)throw new Error('WaspLib client discovery failed: '+result.stderr.slice(0,300));
+  const clients=[];
+  knownPcHandles.clear();
+  for(const line of result.stdout.split(/\r?\n/)){
+    const parts=line.split('\t');
+    if(parts.length<4)continue;
+    const handle=parts[0].trim(), pid=Number(parts[2]);
+    if(!/^(?:0x)?[a-fA-F0-9]{1,18}$/.test(handle) || !Number.isSafeInteger(pid) || pid<=0)continue;
+    const item={handle,client:parts[1].trim().slice(0,80),pid,title:parts.slice(3).join('\t').trim().slice(0,180)};
+    clients.push(item);
+    knownPcHandles.set(handle,{item,seenAt:Date.now()});
+  }
+  return {clients,rawOutput:clients.length ? undefined : result.stdout.slice(0,400)};
+}
+
+async function probePcClient(handle){
+  if(typeof handle!=='string')throw new Error('handle must be a string');
+  const known=knownPcHandles.get(handle);
+  if(!known || Date.now()-known.seenAt>120000)throw new Error('Run wasp_pc_clients first; client selection expired');
+  fs.mkdirSync(DRAFT_ROOT,{recursive:true});
+  const source=[
+    '{$I WaspLib/tools/agents/probe.simba}',
+    'begin',
+    "  WriteLn('MCP_LOGGED_IN=', Client.IsLoggedIn());",
+    "  WriteLn('MCP_INVENTORY_COUNT=', Inventory.Slots.Count());",
+    'end.'
+  ].join('\n')+'\n';
+  const hash=crypto.createHash('sha256').update(source).digest('hex').slice(0,12);
+  const filepath=path.join(DRAFT_ROOT,'mcp-readonly-probe-'+hash+'.simba');
+  try{fs.writeFileSync(filepath,source,{flag:'wx',mode:0o600});}catch(e){if(e.code!=='EEXIST')throw e;}
+  const result=await runSimba(['--target='+handle,'--run',filepath],17000);
+  return {handle,readOnly:true,executed:result.exitCode===0,exitCode:result.exitCode,stdout:result.stdout,stderr:result.stderr};
+}
+
 function compileStaged(filename) {
   if (typeof filename !== 'string' || !/^[a-zA-Z0-9_-]{1,60}-[a-f0-9]{12}\.simba$/.test(filename)) {
     return Promise.reject(new Error('Invalid staged draft filename'));
@@ -263,6 +322,11 @@ async function handleTool(name,input) {
   const a=parsedArgs(input);
   try {
     if(name==='wasp_devices')return jsonResult(Array.from(clients.values()).map(deviceSummary));
+    if(name==='wasp_pc_clients')return jsonResult(await findPcClients());
+    if(name==='wasp_pc_probe'){
+      const result=await probePcClient(a.handle);
+      return result.exitCode===0?jsonResult(result):failResult(JSON.stringify(result));
+    }
     if(!validId(a.deviceId) && ['wasp_observe','wasp_last_frame','wasp_tap','wasp_pause'].includes(name))
       return failResult('Invalid deviceId');
     if(name==='wasp_observe'){
