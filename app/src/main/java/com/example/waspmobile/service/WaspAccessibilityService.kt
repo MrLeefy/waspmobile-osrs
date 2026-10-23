@@ -32,6 +32,7 @@ import android.widget.TextView
 import com.example.waspmobile.engine.CalibrationMode
 import com.example.waspmobile.engine.HumanTouchEngine
 import com.example.waspmobile.engine.MobileVisionEngine
+import com.example.waspmobile.engine.VerifiedInventoryDrop
 import com.example.waspmobile.engine.TargetColorPreset
 import com.example.waspmobile.engine.WaspMobileState
 import com.example.waspmobile.engine.WaspScriptMode
@@ -1195,10 +1196,14 @@ class WaspAccessibilityService : AccessibilityService() {
         var activeFilledSlots = knownFilledSlots
 
         // Capture a clean screenshot to inspect Backpack tab, Tap-to-Drop hotkey, and slot occupancy
-        val checkBmp = captureScreenBitmap()
+        val checkBmp = captureScreenBitmap() ?: run {
+            WaspMobileState.log("Inventory screenshot unavailable; drop cancelled.")
+            WaspMobileState.update { it.copy(statusText = "DROP PAUSED: NO SCREENSHOT") }
+            return
+        }
         var tabWasClosed = false
-        if (checkBmp != null) {
-            try {
+        var dropWasInactive = false
+        try {
                 // 1. Check if Backpack tab is open; if not, tap Backpack tab (0.925f, 0.495f) and wait 300ms
                 val isTabOpen = withContext(Dispatchers.Default) {
                     visionEngine.isInventoryTabOpen(checkBmp)
@@ -1212,7 +1217,10 @@ class WaspAccessibilityService : AccessibilityService() {
                         (screenBounds.width() * (0.925f + 0.010f)).toInt(),
                         (screenBounds.height() * (0.495f + 0.010f)).toInt()
                     )
-                    touchEngine.dispatchHumanTap(this, tabBox, screenBounds)
+                    if (!touchEngine.dispatchHumanTap(this, tabBox, screenBounds)) {
+                        WaspMobileState.log("Backpack tab tap did not complete; drop cancelled.")
+                        return
+                    }
                     delay(300L)
                 }
 
@@ -1221,6 +1229,7 @@ class WaspAccessibilityService : AccessibilityService() {
                     visionEngine.isTapToDropActive(checkBmp)
                 }
                 if (!isDropActive) {
+                    dropWasInactive = true
                     WaspMobileState.update { it.copy(statusText = "ACTIVATING TAP-TO-DROP...") }
                     val hotkeyBox = Rect(
                         (screenBounds.width() * (0.064f - 0.010f)).toInt(),
@@ -1228,7 +1237,10 @@ class WaspAccessibilityService : AccessibilityService() {
                         (screenBounds.width() * (0.064f + 0.010f)).toInt(),
                         (screenBounds.height() * (0.566f + 0.010f)).toInt()
                     )
-                    touchEngine.dispatchHumanTap(this, hotkeyBox, screenBounds)
+                    if (!touchEngine.dispatchHumanTap(this, hotkeyBox, screenBounds)) {
+                        WaspMobileState.log("Tap-to-Drop toggle did not complete; drop cancelled.")
+                        return
+                    }
                     delay(250L)
                 }
 
@@ -1242,27 +1254,36 @@ class WaspAccessibilityService : AccessibilityService() {
                         visionEngine.detectFilledInventorySlots(checkBmp, bmpInvRect)
                     }
                 }
-            } finally {
-                if (!checkBmp.isRecycled) checkBmp.recycle()
-            }
+        } finally {
+            if (!checkBmp.isRecycled) checkBmp.recycle()
         }
 
-        // If tab was previously closed or slots were unknown, capture a fresh screenshot to detect filled slots
-        if (activeFilledSlots == null || tabWasClosed) {
-            val freshBmp = captureScreenBitmap()
-            if (freshBmp != null) {
-                try {
-                    val bmpInvRect = visionEngine.normToScreenRect(
-                        state.invBoxNorm,
-                        freshBmp.width,
-                        freshBmp.height
-                    )
-                    activeFilledSlots = withContext(Dispatchers.Default) {
-                        visionEngine.detectFilledInventorySlots(freshBmp, bmpInvRect)
-                    }
-                } finally {
-                    if (!freshBmp.isRecycled) freshBmp.recycle()
+        // Any UI change invalidates previous slot coordinates and detection.
+        // Confirm both controls and refresh occupancy before a destructive action.
+        if (activeFilledSlots == null || tabWasClosed || dropWasInactive) {
+            val freshBmp = captureScreenBitmap() ?: run {
+                WaspMobileState.log("Unable to verify inventory after UI change; drop cancelled.")
+                WaspMobileState.update { it.copy(statusText = "DROP PAUSED: VERIFY SCREENSHOT") }
+                return
+            }
+            try {
+                val controlsReady = withContext(Dispatchers.Default) {
+                    visionEngine.isInventoryTabOpen(freshBmp) &&
+                        visionEngine.isTapToDropActive(freshBmp)
                 }
+                if (!controlsReady) {
+                    WaspMobileState.log("Backpack or Tap-to-Drop state unverified; drop cancelled.")
+                    WaspMobileState.update { it.copy(statusText = "DROP PAUSED: CONTROLS UNKNOWN") }
+                    return
+                }
+                val bmpInvRect = visionEngine.normToScreenRect(
+                    state.invBoxNorm, freshBmp.width, freshBmp.height
+                )
+                activeFilledSlots = withContext(Dispatchers.Default) {
+                    visionEngine.detectFilledInventorySlots(freshBmp, bmpInvRect)
+                }
+            } finally {
+                if (!freshBmp.isRecycled) freshBmp.recycle()
             }
         }
 
@@ -1278,10 +1299,11 @@ class WaspAccessibilityService : AccessibilityService() {
         if (state.protectSlot2) protectedSlots.add(1)
 
         val dropOrder = touchEngine.generateHumanDropOrder(protectedSlots)
-        val slotsToTap = if (activeFilledSlots != null) {
-            dropOrder.filter { it in activeFilledSlots }
-        } else {
-            dropOrder
+        val slotsToTap = VerifiedInventoryDrop.plan(activeFilledSlots, dropOrder, protectedSlots)
+        if (slotsToTap == null) {
+            WaspMobileState.log("Occupied inventory slots are unknown or invalid; drop cancelled.")
+            WaspMobileState.update { it.copy(statusText = "DROP PAUSED: INVENTORY UNKNOWN") }
+            return
         }
 
         if (slotsToTap.isEmpty()) {
@@ -1302,14 +1324,19 @@ class WaspAccessibilityService : AccessibilityService() {
                 break
             }
             if (slotIdx in slotRects.indices) {
-                touchEngine.dispatchHumanTap(this, slotRects[slotIdx], screenBounds)
+                if (!touchEngine.dispatchHumanTap(this, slotRects[slotIdx], screenBounds)) {
+                    WaspMobileState.log("Slot ${slotIdx + 1} gesture cancelled or timed out; remaining drops skipped.")
+                    WaspMobileState.update { it.copy(statusText = "DROP PAUSED: GESTURE UNCERTAIN") }
+                    return
+                }
                 mainHandler.post { canvasOverlayView?.invalidate() }
                 delay(Random.nextLong(65L, 175L))
             }
         }
-        val remainingFilled = activeFilledSlots?.count { it in protectedSlots } ?: protectedSlots.size
-        lastFilledSlotsCount = remainingFilled
-        WaspMobileState.update { it.copy(statusText = "DROP COMPLETE", filledSlots = remainingFilled) }
+        // Dispatch completion is not proof that the game removed those items.
+        // Next capture must establish the observed occupancy.
+        lastFilledSlotsCount = -1
+        WaspMobileState.update { it.copy(statusText = "DROP INPUT SENT: VERIFY NEXT SCAN") }
     }
 
     /**
