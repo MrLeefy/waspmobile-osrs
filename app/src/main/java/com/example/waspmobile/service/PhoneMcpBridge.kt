@@ -1,76 +1,100 @@
 package com.example.waspmobile.service
 
 import android.content.Context
-import android.os.Build
+import android.os.SystemClock
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
 
-/**
- * Phone-initiated MCP relay client. No inbound phone port or APK patching.
- *
- * Remote control is opt-in for THIS service session only. A disabled service
- * immediately cancels polling. The user must configure an HTTPS endpoint
- * (e.g. Tailscale Serve forwarding to 127.0.0.1:7788 on the PC).
- */
+/** Phone-initiated, session-bound HTTPS relay. No incoming phone port or persisted consent. */
 internal class PhoneMcpBridge(
     private val service: WaspAccessibilityService,
     private val scope: CoroutineScope,
-    private val executor: suspend (String, JSONObject) -> JSONObject
+    private val executor: suspend (String, String, JSONObject, String, Long) -> JSONObject
 ) {
     private var pollJob: Job? = null
-    val enabled: Boolean get() = pollJob?.isActive == true
+    private var settings: Settings? = null
+    @Volatile private var sessionId: String? = null
+    private val connection = AtomicReference<HttpURLConnection?>(null)
+    val enabled: Boolean get() = sessionId != null && pollJob?.isActive == true
 
     fun start(): Boolean {
         if (enabled) return true
-        val settings = readSettings(service) ?: return false
+        val config = readSettings(service) ?: return false
+        val session = UUID.randomUUID().toString()
+        settings = config
+        sessionId = session
+        service.remoteGate.enable(session)
+        mutableStatus.value = Status(true, false, "Connecting to private bridge")
         pollJob = scope.launch(Dispatchers.IO) {
-            while (isActive) {
-                try {
-                    val telemetry = com.example.waspmobile.engine.WaspMobileState.state.value
-                    val req = JSONObject()
-                        .put("deviceId", settings.deviceId)
-                        .put("remoteEnabled", true)
-                        .put("foreground", service.currentForegroundPackage)
-                        .put("width", service.remoteScreenWidth())
-                        .put("height", service.remoteScreenHeight())
-                        .put("status", telemetry.statusText.take(150))
-                    val answer = post(settings, "/device/poll", req)
-                    val command = answer.optJSONObject("command")
-                    if (command != null) {
-                        val id = command.optString("id")
-                        val type = command.optString("type")
-                        val expiresAt = command.optLong("expiresAt")
-                        val result = if (id.isEmpty() || expiresAt <= System.currentTimeMillis()) {
-                            JSONObject().put("ok", false).put("error", "Command expired or invalid")
-                        } else {
-                            try {
-                                withContext(Dispatchers.Main) {
-                                    executor(type, command.optJSONObject("params") ?: JSONObject())
-                                }
-                            } catch (e: Exception) {
-                                JSONObject().put("ok", false)
-                                    .put("error", e.javaClass.simpleName.take(90))
+            try {
+                while (isActive && sessionId == session) {
+                    try {
+                        val payload = withContext(Dispatchers.Main) { service.remoteDeviceStatus() }
+                            .put("deviceId", config.deviceId).put("sessionId", session)
+                            .put("remoteEnabled", true)
+                        val pollStartedAt = SystemClock.elapsedRealtime()
+                        val answer = post(config, "/device/poll", payload)
+                        currentCoroutineContext().ensureActive()
+                        if (sessionId != session) break
+                        mutableStatus.value = Status(true, true, "Connected; remote input requires a fresh game frame")
+                        val command = answer.optJSONObject("command")
+                        if (command != null) {
+                            val id = command.optString("id")
+                            val type = command.optString("type")
+                            val ttl = command.optLong("ttlMs", -1)
+                            val result = withContext(Dispatchers.Main) {
+                                val deadline = if (command.optString("sessionId") == session)
+                                    service.remoteGate.accept(id, session, ttl, pollStartedAt) else null
+                                if (deadline == null || type !in setOf("OBSERVE", "TAP", "PAUSE")) {
+                                    JSONObject().put("ok", false).put("error", "Expired, duplicate or invalid command")
+                                        .put("mayHaveExecuted", false)
+                                } else executor(id, type, command.optJSONObject("params") ?: JSONObject(), session, deadline)
                             }
+                            currentCoroutineContext().ensureActive()
+                            if (sessionId != session) break
+                            result.put("deviceId", config.deviceId).put("sessionId", session).put("id", id)
+                            post(config, "/device/result", result)
                         }
-                        result.put("deviceId", settings.deviceId).put("id", id)
-                        post(settings, "/device/result", result)
+                        delay(500L)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: AuthRejected) {
+                        if (sessionId == session) {
+                            sessionId = null
+                            service.remoteGate.disable()
+                            mutableStatus.value = Status(false, false, "Pairing token rejected; reconnect locally")
+                        }
+                        break
+                    } catch (_: Exception) {
+                        if (sessionId == session) {
+                            service.remoteGate.invalidateFrame()
+                            mutableStatus.value = Status(true, false, "Bridge unreachable; no actions are retried")
+                        }
+                        delay(2000L)
                     }
-                    delay(900L)
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    // Network errors never trigger local game actions or retries of a command.
-                    delay(2500L)
+                }
+            } finally {
+                if (sessionId == session) {
+                    sessionId = null
+                    service.remoteGate.disable()
+                    mutableStatus.value = Status(false, false, "Disconnected")
                 }
             }
         }
@@ -78,76 +102,102 @@ internal class PhoneMcpBridge(
     }
 
     fun stop() {
+        val oldSession = sessionId
+        val oldSettings = settings
+        sessionId = null
+        service.remoteGate.disable()
         pollJob?.cancel()
         pollJob = null
+        connection.getAndSet(null)?.disconnect()
+        mutableStatus.value = Status(false, false, "Disconnected")
+        // Best effort only; local consent is revoked synchronously above even without a network.
+        if (oldSession != null && oldSettings != null) scope.launch(Dispatchers.IO) {
+            try {
+                post(oldSettings, "/device/disconnect", JSONObject()
+                    .put("deviceId", oldSettings.deviceId).put("sessionId", oldSession), track = false)
+            } catch (e: CancellationException) { throw e } catch (_: Exception) { /* heartbeat expires server-side */ }
+        }
     }
 
-    private fun post(settings: Settings, endpoint: String, payload: JSONObject): JSONObject {
-        val url = URL(settings.baseUrl + endpoint)
-        val conn = (url.openConnection() as HttpURLConnection)
+    private class AuthRejected : Exception()
+    private suspend fun post(config: Settings, endpoint: String, payload: JSONObject, track: Boolean = true): JSONObject {
+        currentCoroutineContext().ensureActive()
+        val conn = URL(config.baseUrl + endpoint).openConnection() as HttpURLConnection
+        val started = SystemClock.elapsedRealtime()
+        if (track) connection.set(conn)
         try {
             conn.requestMethod = "POST"
             conn.instanceFollowRedirects = false
-            conn.connectTimeout = 4500
-            conn.readTimeout = 4500
+            conn.connectTimeout = if (track) 3000 else 1000
+            conn.readTimeout = if (track) 3000 else 1000
             conn.doOutput = true
-            conn.setRequestProperty("Authorization", "Bearer " + settings.token)
+            conn.setRequestProperty("Authorization", "Bearer " + config.token)
             conn.setRequestProperty("Content-Type", "application/json")
-            conn.setRequestProperty("Accept", "application/json")
             val body = payload.toString().toByteArray(Charsets.UTF_8)
+            require(body.size <= 1_000_000)
             conn.setFixedLengthStreamingMode(body.size)
             conn.outputStream.use { it.write(body) }
-            if (conn.responseCode != 200) throw IllegalStateException("Bridge response " + conn.responseCode)
-            val response = conn.inputStream.bufferedReader().use { it.readText() }
-            return JSONObject(response)
+            currentCoroutineContext().ensureActive()
+            if (conn.responseCode == 401) throw AuthRejected()
+            check(conn.responseCode == 200) { "Relay rejected request" }
+            val output = ByteArrayOutputStream()
+            conn.inputStream.use { input ->
+                val buffer = ByteArray(1024)
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    check(SystemClock.elapsedRealtime() - started <= 8000) { "Relay response timed out" }
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    check(output.size() + count <= 8192) { "Relay response too large" }
+                    output.write(buffer, 0, count)
+                }
+            }
+            return JSONObject(output.toString("UTF-8"))
         } finally {
+            if (track) connection.compareAndSet(conn, null)
             conn.disconnect()
         }
     }
 
     internal data class Settings(val baseUrl: String, val token: String, val deviceId: String)
+    internal data class Status(val enabled: Boolean = false, val connected: Boolean = false, val message: String = "Disconnected")
 
     companion object {
         private const val PREFS = "waspmobile_mcp_bridge"
         private const val URL_KEY = "url"
         private const val TOKEN_KEY = "token"
         private const val DEVICE_ID_KEY = "device_id"
-
-        fun savedUrl(context: Context): String =
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(URL_KEY, "") ?: ""
-
-        /**
-         * Do not expose stored tokens to the UI or telemetry.
-         * A blank entry in the UI means "keep existing token".
-         */
+        private val mutableStatus = MutableStateFlow(Status())
+        val status = mutableStatus.asStateFlow()
+        private val tokenPattern = Regex("[A-Za-z0-9_-]{32,128}")
+        fun savedUrl(context: Context): String = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(URL_KEY, "") ?: ""
         fun save(context: Context, url: String, newToken: String): Boolean {
             val normalized = url.trim().trimEnd('/')
             if (!validHttpsUrl(normalized)) return false
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val existing = prefs.getString(TOKEN_KEY, "") ?: ""
-            val token = if (newToken.isBlank()) existing else newToken.trim()
-            if (token.length < 32 || token.any { it.isWhitespace() }) return false
-            val id = prefs.getString(DEVICE_ID_KEY, "")?.takeIf { it.isNotEmpty() }
-                ?: ("s23-" + UUID.randomUUID().toString().replace("-", "").take(20))
-            prefs.edit().putString(URL_KEY, normalized).putString(TOKEN_KEY, token)
-                .putString(DEVICE_ID_KEY, id).apply()
+            // Never send a saved credential to a newly entered endpoint without fresh token entry.
+            if (newToken.isBlank() && prefs.getString(URL_KEY, "") != normalized) return false
+            val token = if (newToken.isBlank()) prefs.getString(TOKEN_KEY, "") ?: "" else newToken.trim()
+            if (!tokenPattern.matches(token)) return false
+            val id = prefs.getString(DEVICE_ID_KEY, "")?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,64}")) }
+                ?: "phone-" + UUID.randomUUID().toString()
+            prefs.edit().putString(URL_KEY, normalized).putString(TOKEN_KEY, token).putString(DEVICE_ID_KEY, id).apply()
             return true
         }
-
         private fun readSettings(context: Context): Settings? {
             val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val url = p.getString(URL_KEY, "") ?: ""
             val token = p.getString(TOKEN_KEY, "") ?: ""
             val id = p.getString(DEVICE_ID_KEY, "") ?: ""
-            if (!validHttpsUrl(url) || token.length < 32 || id.isBlank()) return null
+            if (!validHttpsUrl(url) || !tokenPattern.matches(token) || !id.matches(Regex("[A-Za-z0-9_-]{1,64}"))) return null
             return Settings(url, token, id)
         }
-
         internal fun validHttpsUrl(value: String): Boolean = try {
             val uri = URI(value)
-            uri.scheme == "https" && !uri.host.isNullOrBlank() &&
+            uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank() &&
                 uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null &&
-                (uri.path.isNullOrEmpty() || uri.path == "/") && uri.port in -1..65535
+                (uri.path.isNullOrEmpty() || uri.path == "/") && (uri.port == -1 || uri.port in 1..65535)
         } catch (_: Exception) { false }
     }
 }

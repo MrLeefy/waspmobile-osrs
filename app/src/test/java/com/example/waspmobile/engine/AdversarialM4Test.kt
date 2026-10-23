@@ -1,6 +1,7 @@
 package com.example.waspmobile.engine
 
 import android.graphics.Rect
+import com.example.waspmobile.vision.ScreenshotFixtures
 import android.graphics.RectF
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -23,9 +24,9 @@ class AdversarialM4Test {
         }
     }
 
-    private val screenshot1Path = "C:\\Users\\baseb\\.gemini\\antigravity\\brain\\6200e675-bb4d-440a-a521-47ed3e48c4e8\\.user_uploaded\\media_1792780906388_c77464df.jpg"
-    private val screenshot2Path = "C:\\Users\\baseb\\.gemini\\antigravity\\brain\\6200e675-bb4d-440a-a521-47ed3e48c4e8\\.user_uploaded\\media_1792780906471_c6388f0e.jpg"
-    private val screenshot3Path = "C:\\Users\\baseb\\.gemini\\antigravity\\brain\\6200e675-bb4d-440a-a521-47ed3e48c4e8\\.user_uploaded\\media_1792780906545_b4b11f4d.jpg"
+    private val screenshot1Path = ScreenshotFixtures.file(1).path
+    private val screenshot2Path = ScreenshotFixtures.file(2).path
+    private val screenshot3Path = ScreenshotFixtures.file(3).path
 
     private fun loadScreenshot(path: String): BufferedImage {
         val file = File(path)

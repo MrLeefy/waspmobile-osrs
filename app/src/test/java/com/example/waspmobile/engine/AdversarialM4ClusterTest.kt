@@ -1,6 +1,7 @@
 package com.example.waspmobile.engine
 
 import android.graphics.Rect
+import com.example.waspmobile.vision.ScreenshotFixtures
 import android.graphics.RectF
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -58,7 +59,7 @@ class AdversarialM4ClusterTest {
         }
     }
 
-    private val screenshot2Path = "C:\\Users\\baseb\\.gemini\\antigravity\\brain\\6200e675-bb4d-440a-a521-47ed3e48c4e8\\.user_uploaded\\media_1792780906471_c6388f0e.jpg"
+    private val screenshot2Path = ScreenshotFixtures.file(2).path
 
     private fun loadScreenshot2(): BufferedImage {
         val file = File(screenshot2Path)

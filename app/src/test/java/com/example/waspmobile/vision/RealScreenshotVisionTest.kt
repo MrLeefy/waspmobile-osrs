@@ -38,9 +38,9 @@ class RealScreenshotVisionTest {
         }
     }
 
-    private val screenshot1File = File("C:\\Users\\baseb\\.gemini\\antigravity\\brain\\6200e675-bb4d-440a-a521-47ed3e48c4e8\\.user_uploaded\\media_1792780906388_c77464df.jpg")
-    private val screenshot2File = File("C:\\Users\\baseb\\.gemini\\antigravity\\brain\\6200e675-bb4d-440a-a521-47ed3e48c4e8\\.user_uploaded\\media_1792780906471_c6388f0e.jpg")
-    private val screenshot3File = File("C:\\Users\\baseb\\.gemini\\antigravity\\brain\\6200e675-bb4d-440a-a521-47ed3e48c4e8\\.user_uploaded\\media_1792780906545_b4b11f4d.jpg")
+    private val screenshot1File = ScreenshotFixtures.file(1)
+    private val screenshot2File = ScreenshotFixtures.file(2)
+    private val screenshot3File = ScreenshotFixtures.file(3)
 
     private lateinit var visionEngine: MobileVisionEngine
     private lateinit var gameImage1: GameImage

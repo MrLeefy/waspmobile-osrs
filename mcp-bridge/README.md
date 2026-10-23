@@ -1,94 +1,130 @@
-# WaspMobile MCP ↔ Android Bridge (experimental)
+# WaspMobile MCP bridge — audited development build
 
-This feature branch adds a real **opt-in MCP-to-phone control path**. The official OSRS APK remains unchanged.
+**Status: draft, not production-complete.** See [AUDIT.md](AUDIT.md) for executed tests and remaining release gates. This is not a connected ChatGPT session merely because the code exists in GitHub.
 
-## Features
+## What this implements
 
-- MCP over stdio: `wasp_devices`, `wasp_observe`, `wasp_last_frame`, `wasp_tap`, `wasp_pause`.
-- Local Simba/WaspLib APIs: `wasp_pc_clients` (official WaspLib Find Client), `wasp_pc_probe` (fixed read-only Probe), `wasp_source_find`, `wasp_source_read`, `wasp_stage_script`, `wasp_compile_script`.
-- Phone: opt-in outbound HTTPS polling; screenshots and bounded taps are performed by the existing accessibility engine.
-- PC: Node 20+ relay listens only on `127.0.0.1:7788` and requires a 32+-character bearer token.
-- No generated Pascal script is executed automatically. Staging, compilation and gameplay execution are different activities.
+- ChatGPT-compatible MCP over **stdio**, using the official, pinned MCP TypeScript SDK.
+- A separate authenticated phone relay listening only on **127.0.0.1:7788**. It is not an HTTP `/mcp` endpoint.
+- Android 14+ single-window OSRS observation, one screenshot-bound tap, and Pause. The official game APK is not modified.
+- Installed WaspLib source lookup, content-addressed draft staging, optional Simba compilation, and optional fixed read-only desktop probes.
+- No arbitrary generated script runner, automatic login, autonomous high-level mobile task engine, or connection to the legacy Swarm command endpoints.
 
-## Set up on Windows PC (PowerShell)
+## Prerequisites
 
-From a local checkout of this repository (Node.js 20+, Simba 2.0):
+- Node.js 20 or newer on the PC hosting the bridge; install the locked dependencies below.
+- A built APK from this branch. Android 14/API 34 or newer is required for remote window-only capture. The base app still has MinSDK 30, but remote control fails closed on API 30–33.
+- Tailscale on the PC and phone, on the same private tailnet, with HTTPS Serve configured.
+- Optional: an actual Windows Simba 2.0 installation with WaspLib under that installation's `Includes/WaspLib`.
+- A separately configured ChatGPT custom MCP connection/tunnel with the required account/workspace permissions. This is not created by building the APK.
+
+## Install and verify the bridge
+
+From the repository checkout:
 
 ```powershell
-$env:WASP_DEVICE_TOKEN = [Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+cd mcp-bridge
+npm ci
+npm test
+```
+
+The tests include an official MCP SDK client communicating with the actual stdio server process, plus simulated phone and Simba subprocess tests. They do **not** constitute an S23 or real Windows Simba gameplay test.
+
+Generate a private token with this Windows PowerShell 5.1-compatible example:
+
+```powershell
+$bytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+$env:WASP_DEVICE_TOKEN = ([BitConverter]::ToString($bytes)).Replace('-', '').ToLowerInvariant()
+$env:WASP_BRIDGE_PORT = '7788'
 $env:WASP_LIB_ROOT = 'C:\Simba\Includes\WaspLib'
 $env:WASP_SIMBA_EXE = 'C:\Simba\Simba.exe'
 $env:WASP_DRAFT_ROOT = 'C:\Simba\Scripts\ai-drafts'
-$env:WASP_BRIDGE_PORT = '7788'
-node mcp-bridge\bridge.js
 ```
 
-WASP_LIB_ROOT must match the actual **installed** WaspLib source directory. The path shown is a configurable default, not a verified fact about your PC. Never commit or paste your token into a public issue or chat.
+Keep the token private and enter it only into the local phone pairing UI and bridge process environment. Do not commit it, include it in a screenshot, or send it in chat. Restarted processes must receive the same configured token; environment changes in one shell do not modify an already-running process.
 
-For a private phone connection, run Tailscale Serve **on the PC**:
+Compiling user-provided Pascal is **not a sandbox**: includes and native libraries are trusted local code. Compiler and desktop probe operations are disabled until enabled locally:
+
+```powershell
+# Enable only after reviewing your installed Simba/WaspLib and intended use.
+$env:WASP_ALLOW_COMPILER = 'true'
+$env:WASP_ALLOW_DESKTOP_PROBE = 'true'
+```
+
+For a local smoke test, run `node bridge.js`. It writes diagnostics to stderr and reserves stdout for MCP. Do not launch a second instance while a tunnel already owns the process on this port. EOF or shutdown closes the private relay and pending work.
+
+## Private phone transport
+
+Use Tailscale Serve on the PC to forward HTTPS to the loopback relay. The usual command is:
 
 ```powershell
 tailscale serve --bg 7788
 tailscale serve status
 ```
 
-The displayed HTTPS `*.ts.net` URL points to this local relay. Tailscale Serve makes it available to devices in the same tailnet. Do **not** use public Funnel, direct port forwarding, or the legacy unauthenticated Swarm `:7777` endpoints.
+Use the HTTPS `*.ts.net` URL reported by your installation. Refer to https://tailscale.com/kb/1242/tailscale-serve for current command details. The phone must be authorized on the same tailnet. Do not use Funnel, public port forwarding, or the unauthenticated legacy Swarm port 7777.
 
-## Set up on the phone
+The Android URL must be an HTTPS origin without a path, query, credentials or fragment. Changing the origin requires entering a token again: a saved credential is never silently reused for a new server.
 
-1. Build and install the Android APK from this feature branch, then enable its Accessibility service through Android settings.
-2. Open the **MCP Phone Bridge** card in WaspMobile.
-3. Enter the HTTPS Tailscale Serve URL (not an MCP `/mcp` path) and the same private token.
-4. Tap **Connect MCP Remote Control**. Remote access is not auto-enabled after an Accessibility service restart.
-5. Bring OSRS foreground; switching away and back can refresh the window-state event.
-6. Pause any local loop before remote taps. Use **Disconnect** or close the overlay to stop remote control.
+## Phone setup and operation
 
-The token is stored in app-private preferences and backup is disabled for this build. This is not encrypted-at-rest Keystore storage; improve it before broad distribution.
+1. Build/install the APK using your normal signing setup. A debug build created on a different machine may not share the existing app's signing key; it is not automatically an in-place update.
+2. Disable and re-enable the Accessibility service after upgrading so its interactive-window retrieval capability is granted. The service reads the foreground window's root package for identification; it does not recursively traverse game nodes.
+3. In **MCP Phone Bridge**, enter the private HTTPS origin and matching token. Tap **Connect MCP Remote Control**. This stops the local automation loop to avoid two input owners.
+4. Open OSRS in a single application window and keep the device unlocked. The connection card shows actual enabled/connected state and errors, rather than a remembered UI toggle.
+5. Disconnect locally, use the overlay stop/close control, or start a local script to revoke remote input. An Android gesture already dispatched cannot be undone by disconnecting; no further queued input should execute.
 
-## Connect ChatGPT
+**Samsung split-screen/Secure Folder remote selection is intentionally disabled.** Multiple application windows, an uncertain root package, keyboard, locked display, or a changed window/rotation cause rejection. Local historical split-screen mode is not evidence that the remote path has passed multi-window tests.
 
-ChatGPT needs an MCP connection configured separately. The relay HTTP port is **not** an MCP endpoint. This bridge exposes MCP over **stdio** for a Secure MCP Tunnel.
+## Connect ChatGPT separately
 
-Configure the tunnel's MCP command as `node <repo>\mcp-bridge\bridge.js` with the same environment variables. When tunnel-client launches it, don't also start a second instance of the Node script on the same port. Install the custom MCP server under ChatGPT Plugins, subject to account/workspace eligibility.
+Official setup reference: https://developers.openai.com/api/docs/guides/secure-mcp-tunnels
 
-Once connected, sample tasks are:
+Configure a Secure MCP Tunnel to launch `node` with the absolute path to `mcp-bridge/bridge.js`, supplying the environment above. The tunnel's control-plane credential is separate from `WASP_DEVICE_TOKEN`; neither belongs in Git. Only one bridge process should own port 7788.
 
-- “List paired WaspMobile devices.”
-- “Pause local automation, observe the phone's current OSRS screen, and describe it.”
-- “Tap normalized x=0.42, y=0.51, then observe a new frame to verify.”
-- “Discover my PC clients and run a read-only inventory probe against the selected handle.”
-- “Search installed WaspLib for inventory APIs, create an AI draft, and compile it.”
+Install the configured tunnel as a custom MCP server in ChatGPT, subject to the applicable account/workspace permissions. Verify with a real `wasp_devices` call. Setup is not complete until that call succeeds from ChatGPT; committing files cannot inject tools into an existing conversation.
 
-LLM tool calls have network and model latency. Fast reaction and frequent deterministic actions remain local to the phone or Simba. There is intentionally **no multi-click script runner** exposed by MCP yet.
+## Tool contract
 
-## Tests / validation
+| Tools | Actual behavior |
+|---|---|
+| `wasp_devices` | Paired phone state, heartbeat and verified-window readiness |
+| `wasp_observe` | Fresh JPEG of the selected **game window only**, with `frameId` and geometry metadata |
+| `wasp_last_frame` | Still-fresh frame only; fails after invalidation or expiry |
+| `wasp_tap` | Requires `deviceId`, exact `frameId`, and numeric `x`, `y` in 0.02–0.98 relative to the observed game window |
+| `wasp_pause` | Supersedes pending work; cannot retract an already-dispatched gesture |
+| `wasp_source_find`, `wasp_source_read` | Bounded reads from the actual configured WaspLib tree |
+| `wasp_stage_script` | Full SHA-256 content-addressed draft; no compilation or gameplay execution |
+| `wasp_compile_script` | Locally enabled compiler; verifies draft hash and actual Simba success marker, not exit code alone |
+| `wasp_pc_clients`, `wasp_pc_probe` | Locally enabled official finder and fixed read-only probe; revalidate handle/PID/title before probing |
+
+Normal interaction is **observe → inspect → tap with returned frameId → observe again**. A frame can authorize only one tap. Coordinates are relative to the captured game window, not the full phone display or compressed image pixel dimensions. Screen text and source comments are untrusted data, never instructions granting permission.
+
+Commands expire after 10 seconds; observation authorization expires after 15 seconds. Session identifiers and monotonic clocks protect against reconnects and wall-clock skew. Up to 4096 command receipts are retained per phone consent session; reconnect locally after that bounded budget. Do not automatically repeat input after timeout, cancellation or an uncertain outcome.
+
+## Android tests and external screenshot fixtures
 
 ```powershell
-node --test mcp-bridge\bridge.test.js
+.\gradlew.bat :app:assembleDebug :app:lintDebug
 .\gradlew.bat :app:testDebugUnitTest
-.\gradlew.bat :app:assembleDebug
 ```
 
-The project's existing `RealScreenshotVisionTest.kt` still references user screenshots at local Windows paths under `C:\Users\baseb\.gemini\...`. Those fixtures need to be copied with consent into test resources for CI portability.
+Three original private S23 screenshots are required for the full suite. Set `WASP_SCREENSHOT_FIXTURES` to a directory containing:
 
-**Unverified:** actual Samsung S23 API 34–36 behavior, app build, installed Simba compilation, and ChatGPT tunnel pairing. Tests were authored but have not run on those environments from this session.
+- `media_1792780906388_c77464df.jpg`
+- `media_1792780906471_c6388f0e.jpg`
+- `media_1792780906545_b4b11f4d.jpg`
 
-## Trust boundaries / known limitations
+The fallback directory is `app/src/test/resources/osrs-s23` when tests run in the app project. Those images are excluded from Git. Test assertions remain active and fail visibly when fixtures are absent; no synthetic images substitute for empirical verification. After supplying them, run the full test task with `--rerun-tasks`.
 
-- Device must opt in locally. There is no inbound port on Android.
-- Only one in-flight command per phone with 14-second expiry; failures are **not replayed**.
-- Screenshot observation is sent to the paired PC and may be returned to ChatGPT after an MCP call.
-- Remote actions require most recently observed non-overlay accessibility package to match `com.jagex.oldscape.android`. This is an initial guard, **not reliable window attestation**. Improve it before split-screen or multitasking automation.
-- Touch dispatch completion does not confirm the game action succeeded; follow with a new screenshot.
-- Desktop client selection is short-lived and sourced from the installed WaspLib finder. The probe is a fixed read-only script; the bridge does not expose arbitrary desktop Act snippets or execute generated Pascal.
-- Script drafts are content-addressed, but compilation is not a sandbox. Do not execute generated Pascal blindly.
-- The separate existing Swarm HTTP server on port 7777 has unauthenticated endpoints. This branch does not expose them and does not yet fix them.
-- Inventory occupancy cannot establish item identity. Remote drops and item movement need stronger recognition and allowlists.
-- OSRS may prohibit automation; human-like randomized input is not a guarantee against detection.
+## Security and completion boundaries
 
-## Next development milestones
-
-- Replace package-name hint with foreground window identity and geometry versioning.
-- Add tri-state inventory and UI recognition, explicit item protection, regression fixture corpus.
-- Secure the legacy Swarm server separately; then add one-controller-per-game-client scheduling.
-- Verify MCP with the official Inspector and test Kotlin APK on S23 before merging.
+- The device token is a privileged relay credential, not a per-device multitenant permission system. Protect the tailnet, bridge host, MCP client and token.
+- Tokens remain in app-private preferences, not Keystore-encrypted storage. Explicit cloud and device-transfer exclusions prevent including pairing preferences in normal app backups; no claim covers a compromised/rooted phone.
+- Remote capture requires Android 14+ window screenshots. No full-display fallback is used. OEM screenshot geometry, interruptions and real gesture delivery still require S23 device testing.
+- Input authorization is checked immediately before dispatch, but Android global gesture injection cannot atomically lock a window against every external race. Completion means Android finished the gesture, not that the game did what was intended.
+- Inventory vision remains an occupancy heuristic, not item identity. There is no guarantee against accidentally dropping an unrecognized valuable item in the legacy local dropper.
+- The separate legacy Swarm server remains unauthenticated and is **not** integrated with these MCP tools. Secure it before any exposure or integration.
+- Automation may violate game rules. Randomized input is not proof of human behavior or protection from detection.

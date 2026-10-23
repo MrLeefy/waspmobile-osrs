@@ -1,4 +1,4 @@
-﻿*.iml
+*.iml
 .gradle/
 /local.properties
 /.idea/
@@ -18,3 +18,8 @@
 PROJECT.md
 TEST_INFRA.md
 TEST_READY.md
+
+# Local bridge dependencies and private screenshot fixtures
+/mcp-bridge/node_modules/
+/app/src/test/resources/osrs-s23/*.jpg
+/app/src/test/resources/osrs-s23/*.png

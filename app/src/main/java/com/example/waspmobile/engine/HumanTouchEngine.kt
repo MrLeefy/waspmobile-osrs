@@ -8,6 +8,8 @@ import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -148,10 +150,17 @@ class HumanTouchEngine(
     internal suspend fun dispatchGestureAndAwait(
         service: AccessibilityService,
         gesture: GestureDescription,
-        timeoutMs: Long
+        timeoutMs: Long,
+        guard: () -> Boolean = { true }
     ): Boolean = gestureMutex.withLock {
+        coroutineContext.ensureActive()
+        if (!guard()) return@withLock false
         val completedSuccessfully = withTimeoutOrNull(timeoutMs) {
             suspendCancellableCoroutine { cont ->
+                if (!cont.isActive || !guard()) {
+                    if (cont.isActive) cont.resume(false)
+                    return@suspendCancellableCoroutine
+                }
                 val accepted = try {
                     service.dispatchGesture(
                         gesture,

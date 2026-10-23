@@ -77,7 +77,8 @@ fun MainScreen(
     val scroll = rememberScrollState()
     var mcpUrl by remember { mutableStateOf(PhoneMcpBridge.savedUrl(context)) }
     var mcpTokenInput by remember { mutableStateOf("") }
-    var mcpEnabled by remember { mutableStateOf(WaspAccessibilityService.isMcpRemoteEnabled()) }
+    val mcpStatus by PhoneMcpBridge.status.collectAsState()
+    val mcpEnabled = mcpStatus.enabled
 
     LaunchedEffect(Unit) {
         WaspMobileState.loadPrefs(context)
@@ -247,12 +248,14 @@ fun MainScreen(
             Text(
                 text = "Manual opt-in each service session. Screenshots may be sent to your private PC bridge. " +
                     "Use an HTTPS Tailscale Serve URL and a private 32+ character token. " +
-                    "Pause local scripts before remote taps.",
+                    "Android 14+ only. Single foreground OSRS window required; split-screen remote control is disabled.",
                 color = Color(0xFFCBD5E1),
                 fontSize = 11.sp
             )
+            Text(mcpStatus.message, color = Color(0xFFCBD5E1), fontSize = 11.sp)
             OutlinedTextField(
                 value = mcpUrl,
+                enabled = !mcpEnabled,
                 onValueChange = { mcpUrl = it },
                 label = { Text("HTTPS bridge URL", color = Color(0xFF94A3B8)) },
                 singleLine = true,
@@ -261,6 +264,7 @@ fun MainScreen(
             )
             OutlinedTextField(
                 value = mcpTokenInput,
+                enabled = !mcpEnabled,
                 onValueChange = { mcpTokenInput = it },
                 label = { Text("Bridge token (blank keeps saved token)", color = Color(0xFF94A3B8)) },
                 visualTransformation = PasswordVisualTransformation(),
@@ -272,11 +276,9 @@ fun MainScreen(
                 onClick = {
                     if (mcpEnabled) {
                         WaspAccessibilityService.setMcpRemoteEnabled(false)
-                        mcpEnabled = false
                     } else {
                         val valid = PhoneMcpBridge.save(context, mcpUrl, mcpTokenInput)
                         val started = valid && WaspAccessibilityService.setMcpRemoteEnabled(true)
-                        mcpEnabled = started
                         mcpTokenInput = ""
                         Toast.makeText(
                             context,
