@@ -16,11 +16,13 @@ const readline = require('node:readline');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const {spawn} = require('node:child_process');
 
 const PORT = Number(process.env.WASP_BRIDGE_PORT || 7788);
 const DEVICE_TOKEN = process.env.WASP_DEVICE_TOKEN || '';
 const LIB_ROOT = path.resolve(process.env.WASP_LIB_ROOT || 'C:\\Simba\\Includes\\WaspLib');
 const DRAFT_ROOT = path.resolve(process.env.WASP_DRAFT_ROOT || 'C:\\Simba\\Scripts\\ai-drafts');
+const SIMBA_EXE = path.resolve(process.env.WASP_SIMBA_EXE || 'C:\\Simba\\Simba.exe');
 const GAME_PACKAGE = 'com.jagex.oldscape.android';
 const MAX_FRAME_CHARS = 900000;
 const ONLINE_MS = 15000;
@@ -193,7 +195,8 @@ const TOOLS = [
   {name:'wasp_pause',description:'Stop local Android automation (does not log out).',inputSchema:{type:'object',properties:{deviceId:{type:'string'}},required:['deviceId']}},
   {name:'wasp_source_find',description:'Search the installed WaspLib .simba source tree, bounded and read-only.',inputSchema:{type:'object',properties:{query:{type:'string',minLength:2,maxLength:80}},required:['query']}},
   {name:'wasp_source_read',description:'Read an installed WaspLib file by safe relative path; output is capped.',inputSchema:{type:'object',properties:{path:{type:'string'}},required:['path']}},
-  {name:'wasp_stage_script',description:'Stage Pascal script text under ai-drafts with a content hash. Never compiles or executes it.',inputSchema:{type:'object',properties:{name:{type:'string'},source:{type:'string'}},required:['name','source']}}
+  {name:'wasp_stage_script',description:'Stage Pascal script text under ai-drafts with a content hash. Never compiles or executes it.',inputSchema:{type:'object',properties:{name:{type:'string'},source:{type:'string'}},required:['name','source']}},
+  {name:'wasp_compile_script',description:'Compile a previously staged .simba draft using the configured local Simba executable. Never runs gameplay.',inputSchema:{type:'object',properties:{filename:{type:'string'}},required:['filename']}}
 ];
 
 function sourcePath(rel) {
@@ -231,6 +234,32 @@ function findSources(query) {
   return {matches:found,filesExamined:examined,truncated:found.length===30 || examined===2500};
 }
 
+function compileStaged(filename) {
+  if (typeof filename !== 'string' || !/^[a-zA-Z0-9_-]{1,60}-[a-f0-9]{12}\.simba$/.test(filename)) {
+    return Promise.reject(new Error('Invalid staged draft filename'));
+  }
+  const file = path.join(DRAFT_ROOT,filename);
+  if (!fs.existsSync(file) || fs.lstatSync(file).isSymbolicLink() || !fs.statSync(file).isFile()) {
+    return Promise.reject(new Error('Draft not found'));
+  }
+  if (!fs.existsSync(SIMBA_EXE)) return Promise.reject(new Error('Simba.exe not found; configure WASP_SIMBA_EXE'));
+  return new Promise((resolve,reject)=>{
+    const child = spawn(SIMBA_EXE,['--compile',file],{
+      cwd:path.dirname(SIMBA_EXE), windowsHide:true, stdio:['ignore','pipe','pipe']
+    });
+    let stdout='',stderr='',ended=false;
+    const cap=(value,part)=> (value+part).slice(-16000);
+    const timer=setTimeout(()=>{child.kill();reject(new Error('Compilation timed out after 20s'));},20000);
+    child.stdout.on('data',d=>{stdout=cap(stdout,d.toString());});
+    child.stderr.on('data',d=>{stderr=cap(stderr,d.toString());});
+    child.on('error',e=>{if(ended)return;ended=true;clearTimeout(timer);reject(e);});
+    child.on('close',(code,signal)=>{
+      if(ended)return;ended=true;clearTimeout(timer);
+      resolve({filename,compiled:code===0,exitCode:code,signal,stdout,stderr,executed:false});
+    });
+  });
+}
+
 async function handleTool(name,input) {
   const a=parsedArgs(input);
   try {
@@ -258,6 +287,10 @@ async function handleTool(name,input) {
       const size=fs.statSync(file).size;
       if(size>250000)return failResult('File too large to read');
       return jsonResult({path:a.path,sha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'),source:fs.readFileSync(file,'utf8')});
+    }
+    if(name==='wasp_compile_script'){
+      const result=await compileStaged(a.filename);
+      return result.compiled?jsonResult(result):failResult(JSON.stringify(result));
     }
     if(name==='wasp_stage_script'){
       if(!validId(a.name)||typeof a.source!=='string'||!a.source.trim()||Buffer.byteLength(a.source)>200000)
