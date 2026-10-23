@@ -139,8 +139,11 @@ const server = http.createServer(async (req,res) => {
     error:typeof data.error === 'string' ? data.error.slice(0,160) : null
   };
   if (task.type === 'OBSERVE' && response.ok && typeof data.frame === 'string') {
-    if (data.frame.length <= MAX_FRAME_CHARS &&
-        /^[A-Za-z0-9+/]+={0,2}$/.test(data.frame)) {
+    const imageBytes = data.frame.length <= MAX_FRAME_CHARS &&
+        /^[A-Za-z0-9+/]+={0,2}$/.test(data.frame) ? Buffer.from(data.frame, 'base64') : null;
+    if (imageBytes && imageBytes.length >= 4 &&
+        imageBytes[0] === 0xff && imageBytes[1] === 0xd8 &&
+        imageBytes[imageBytes.length - 2] === 0xff && imageBytes[imageBytes.length - 1] === 0xd9) {
       const device = clients.get(data.deviceId);
       if (device) device.lastFrame = {data:data.frame,at:Date.now()};
       response.hasFrame = true;
