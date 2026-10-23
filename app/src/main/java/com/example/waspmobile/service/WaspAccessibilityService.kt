@@ -32,6 +32,7 @@ import android.widget.TextView
 import com.example.waspmobile.engine.CalibrationMode
 import com.example.waspmobile.engine.HumanTouchEngine
 import com.example.waspmobile.engine.MobileVisionEngine
+import com.example.waspmobile.engine.VerifiedInventoryDrop
 import com.example.waspmobile.engine.TargetColorPreset
 import com.example.waspmobile.engine.WaspMobileState
 import com.example.waspmobile.engine.WaspScriptMode
