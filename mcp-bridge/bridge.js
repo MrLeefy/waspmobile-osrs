@@ -281,8 +281,8 @@ async function probePcClient(handle){
   const source=[
     '{$I WaspLib/tools/agents/probe.simba}',
     'begin',
-    "  WriteLn('MCP_LOGGED_IN=', Client.IsLoggedIn());",
-    "  WriteLn('MCP_INVENTORY_COUNT=', Inventory.Slots.Count());",
+    "  WriteLn('MCP_LOGGED_IN=' + ToStr(Client.IsLoggedIn()));",
+    "  WriteLn('MCP_INVENTORY_COUNT=' + ToStr(Inventory.Slots.Count()));",
     'end.'
   ].join('\n')+'\n';
   const hash=crypto.createHash('sha256').update(source).digest('hex').slice(0,12);
