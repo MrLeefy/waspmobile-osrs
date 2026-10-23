@@ -52,7 +52,7 @@ The full Android suite is intentionally still red. Test assertions were not remo
 
 ### Explicit functional/security boundaries
 
-- Remote Android 10–13/API 30–33 support and Samsung split-screen/Secure Folder selection are not implemented. The app rejects these remote cases. The existing base application still targets MinSDK 30.
+- Remote Android 11–13/API 30–33 support and Samsung split-screen/Secure Folder selection are not implemented. The app rejects these remote cases. The existing base application still targets MinSDK 30.
 - The legacy Swarm server on port 7777 still has unauthenticated mutation routes. It was not connected to the new MCP relay, and must be secured separately before integration or exposure.
 - The mobile high-level skill executor requested in the broader project is not implemented. Current remote tools perform bounded observations, single taps and Pause; generated desktop scripts are staged/optionally compiled, not automatically run.
 - The inventory detector cannot identify all protected/valuable items. Occupancy confidence is not item identity. Broad unattended destructive operations remain unsafe to assume correct.
