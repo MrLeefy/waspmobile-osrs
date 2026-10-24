@@ -15,7 +15,7 @@ The actual one-phone constraints, pairing and tests are documented in [ONE_PHONE
 **Project scope:** This repository and its Agent Desk belong to the OSRS/WaspMobile conversation only. Keep other game projects, conversations, agents and task queues separate.
 
 The opt-in MCP bridge is documented in [mcp-bridge/README.md](mcp-bridge/README.md).
-The floating [Agent Desk](mcp-bridge/DASHBOARD.md) adds MCP messages, replies, exact plan review, local approval and bounded color-guarded mobile execution. Current verification is in [dashboard-results.json](mcp-bridge/dashboard-results.json); the preceding audit is in [AUDIT.md](mcp-bridge/AUDIT.md).
+The floating [Agent Desk](mcp-bridge/DASHBOARD.md) adds MCP messages, replies, exact plan review, local approval and bounded color-guarded mobile execution. **MCP 2.0 Events** can now trigger a subscribed [OSRS ChatGPT Work chat or dot](mcp-bridge/MCP_EVENTS.md) when the user sends a message from the overlay, without switching out of OSRS. Ordinary chats cannot be automatically triggered by this feature. Current verification is in [dashboard-results.json](mcp-bridge/dashboard-results.json); the preceding audit is in [AUDIT.md](mcp-bridge/AUDIT.md).
 Remote phone control uses Android 14+ window-only screenshots, verified single-window identity, one-shot screenshot-bound taps, and approved JSON plans limited to 24 steps/12 taps/120 seconds. The panel is an MCP mailbox, not an embedded OSRS ChatGPT conversation or automatic agent wake-up. Remote split-screen and a complete Android port of WaspLib are not implemented. The legacy Swarm server is separate and unauthenticated;
 do not expose it as an MCP endpoint. No motion-randomization scheme guarantees anti-cheat immunity.
 

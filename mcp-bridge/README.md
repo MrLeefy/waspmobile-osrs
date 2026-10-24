@@ -14,9 +14,10 @@ The old split-screen menu is unavailable during this pilot. No separate Swarm se
 - A separate authenticated phone relay listening only on **127.0.0.1:7788**. It is not an HTTP `/mcp` endpoint.
 - Android 14+ single-window OSRS observation, one screenshot-bound tap, and Pause. The official game APK is not modified.
 - A floating AI/Agent Desk with MCP inbox/replies, manual takeover, exact script review and on-phone approval.
+- Optional [MCP 2.0 Events](MCP_EVENTS.md): a verified ChatGPT Work chat or OSRS dot can subscribe to new overlay messages and respond while OSRS remains open. This does not post into this ordinary ChatGPT conversation.
 - Bounded JSON mobile scripts using fresh observations, waits, color assertions and guarded taps; maximum 24 steps, 12 tap attempts and 120 seconds.
 - Installed WaspLib source lookup, content-addressed draft staging, optional Simba compilation, and optional fixed read-only desktop probes.
-- No arbitrary code evaluation, automatic login, automatic dot wake-up, full desktop WaspLib port to Android, or connection to the legacy Swarm command endpoints.
+- No arbitrary code evaluation, automatic login, full desktop WaspLib port to Android, or connection to the legacy Swarm command endpoints. Without a Work/dot MCP Event subscription, the overlay remains an inbox and does not start an AI turn.
 
 ## Prerequisites
 
@@ -104,7 +105,7 @@ Install the configured tunnel as a custom MCP server in ChatGPT, subject to the 
 | `wasp_last_frame` | Still-fresh frame only; fails after invalidation or expiry |
 | `wasp_tap` | Requires `deviceId`, exact `frameId`, and numeric `x`, `y` in 0.02–0.98 relative to the observed game window |
 | `wasp_pause` | Supersedes pending work and holds remote input until locally allowed; cannot retract an already-dispatched gesture |
-| `wasp_inbox`, `wasp_reply` | Session-scoped phone requests and agent replies; sending a request does not wake a dot |
+| `wasp_inbox`, `wasp_reply` | Session-scoped requests and replies; an MCP Events subscription can trigger a supported Work chat or dot when a message is posted |
 | `wasp_offer_plan` | Strictly validated, immutable mobile proposal requiring approval on the phone |
 | `wasp_cancel_plan` | Cancel a proposal/run on the next poll; never auto-resume |
 | `wasp_source_find`, `wasp_source_read` | Bounded reads from the actual configured WaspLib tree |

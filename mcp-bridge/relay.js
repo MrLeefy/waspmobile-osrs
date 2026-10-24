@@ -23,7 +23,11 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
   const expectedToken = Buffer.from(token);
   const devices = new Map();
   const pending = new Map();
-  const desk = createAgentDesk({now});
+  const messageListeners = new Set();
+  let eventSummary = () => ({available:false,subscribed:false,status:'No Work/dot event subscription'});
+  const desk = createAgentDesk({now,onUserMessage:request=>{
+    for(const callback of messageListeners) {try{callback(request);}catch{}}
+  }});
   // Bind to the first valid device for the lifetime of this process; never silently
   // replace it when its heartbeat expires. Optional configured ID survives restarts.
   let pairedDeviceId = allowedDeviceId || null;
@@ -164,7 +168,7 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
         try { device = register(data); } catch (e) { return reply(res, 400, {error: e.message}); }
         let ackMessages;
         try { ackMessages = desk.receive(device, data); } catch (e) { return reply(res, 400, {error: e.message}); }
-        const overlay = {...desk.view(device, data.afterSeq), ackMessages};
+        const overlay = {...desk.view(device, data.afterSeq), ackMessages, events:eventSummary(device.id)};
         const task = pending.get(device.task);
         if (!task || task.delivered) return reply(res, 200, {command: null, desk: overlay});
         if (now() >= task.deadline) {
@@ -285,6 +289,12 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
     return device;
   }
   return {server, request, getFrame, close,
+    subscribeMessages:fn=>{messageListeners.add(fn);return ()=>messageListeners.delete(fn);},
+    sessionActive:(id,sessionId)=>{
+      const device=devices.get(id);
+      return !!(fresh(device) && device.enabled && device.session===sessionId);
+    },
+    setEventSummary:callback=>{if(typeof callback==='function')eventSummary=callback;},
     inbox: (id, after) => desk.inbox(deskDevice(id), after),
     reply: (id, args) => desk.reply(deskDevice(id), args),
     offerPlan: (id, plan, requestId) => desk.offer(deskDevice(id), plan, requestId),

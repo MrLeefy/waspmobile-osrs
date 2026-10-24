@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.waspmobile"
         minSdk = 30
         targetSdk = 36
-        versionCode = 4
-        versionName = "2.1.1-single-device-preview"
+        versionCode = 5
+        versionName = "2.1.2-mcp-events-preview"
     }
 
     testOptions {

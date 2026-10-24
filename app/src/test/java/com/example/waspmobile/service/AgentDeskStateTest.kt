@@ -28,6 +28,32 @@ class AgentDeskStateTest {
         assertEquals(1, desk.state.value.outbox.size)
         assertFalse(desk.state.value.messages[0].queued)
     }
+    @Test fun eventsWithoutSubscriptionStayInInboxOnly() {
+        desk.begin("session1", "phone1")
+        val info = JSONObject().put("available", true).put("subscribed", false)
+            .put("status", "Subscription missing")
+        desk.receive("session1", packet().put("events", info))
+        assertTrue(desk.state.value.eventsAvailable)
+        assertFalse(desk.state.value.eventSubscribed)
+        assertEquals("Subscription missing", desk.state.value.eventStatus)
+    }
+    @Test fun subscribedEventStateIsShownOnlyWhenServerReportsIt() {
+        desk.begin("session1", "phone1")
+        val info = JSONObject().put("available", true).put("subscribed", true)
+            .put("status", "Work/dot subscription active")
+        desk.receive("session1", packet().put("events", info))
+        assertTrue(desk.state.value.eventSubscribed)
+        val revoked = JSONObject().put("available", true).put("subscribed", false)
+        desk.receive("session1", packet().put("events", revoked))
+        assertFalse(desk.state.value.eventSubscribed)
+    }
+    @Test fun staleSessionCannotFabricateEventSubscription() {
+        desk.begin("session1", "phone1")
+        desk.receive("old", packet().put("events",
+            JSONObject().put("available", true).put("subscribed", true)))
+        assertFalse(desk.state.value.eventSubscribed)
+    }
+
     @Test fun staleSessionCannotInjectRepliesOrProposals() {
         desk.begin("session1", "phone1")
         desk.receive("old", packet().put("proposal", offer()))

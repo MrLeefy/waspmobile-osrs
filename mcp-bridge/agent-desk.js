@@ -26,7 +26,7 @@ const validId = v => typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v);
 const terminal = new Set(['COMPLETED', 'FAILED', 'CANCELLED', 'REJECTED', 'EXPIRED']);
 
 /** In-memory, bounded, per-consent-session mailbox. This is NOT a dot wake-up API. */
-function createAgentDesk({now, maxMessages = 40, proposalMs = 120000}) {
+function createAgentDesk({now, maxMessages = 40, proposalMs = 120000, onUserMessage = () => {}}) {
   const desks = new Map();
   function get(device) {
     let desk = desks.get(device.id);
@@ -68,6 +68,8 @@ function createAgentDesk({now, maxMessages = 40, proposalMs = 120000}) {
         desk.receipts.set(message.id, hash(body));
         add(desk, 'user', message.id, body);
         desk.lastUserAt = now();
+        const request = {deviceId:device.id,sessionId:desk.session,id:message.id,text:body};
+        queueMicrotask(() => {try{onUserMessage(request);}catch{}});
       }
       acknowledged.push(message.id);
     }

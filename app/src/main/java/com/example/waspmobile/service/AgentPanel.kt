@@ -36,6 +36,9 @@ internal class AgentPanel(
     private var composer: EditText? = null
     private var approveButton: Button? = null
     private var rejectButton: Button? = null
+    private var sendButton: Button? = null
+    private var shareButton: Button? = null
+    private var eventHelp: TextView? = null
     private var state = AgentDeskSnapshot()
     private var bridgeStatus = PhoneMcpBridge.Status()
     var isEditing = false
@@ -86,18 +89,21 @@ internal class AgentPanel(
         }
         panel.addView(composer)
         val sendRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        sendRow.addView(button("Send to MCP inbox") {
+        sendButton = button("Queue in MCP inbox") {
             val typed = composer?.text?.toString().orEmpty()
             if (typed.isNotBlank()) takeControl()
             if (desk.queue(typed)) composer?.setText("")
             else connection?.text = "Connect first; request must be 1–1000 characters and inbox must have space."
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        sendRow.addView(button("Share to ChatGPT") {
+        }
+        shareButton = button("Open ChatGPT instead") {
             takeControl()
             shareToChatGPT(composer?.text?.toString().orEmpty())
-        }, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        sendRow.addView(sendButton, LinearLayout.LayoutParams(0, -2, 1f))
+        sendRow.addView(shareButton, LinearLayout.LayoutParams(0, -2, 1f))
         panel.addView(sendRow)
-        panel.addView(label("OSRS/WaspMobile mailbox, not embedded ChatGPT. Open this OSRS conversation; sending does not start an agent turn.", 10f))
+        eventHelp = label("MCP inbox only; no ChatGPT Work/dot event subscription. Messages are queued, not sent into a chat turn.", 10f)
+        panel.addView(eventHelp)
         val p = WindowManager.LayoutParams(
             minOf(dp(380), (bounds.width() * .48).toInt()).coerceAtLeast(minOf(dp(240), bounds.width())),
             (bounds.height() * .88).toInt(), WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
@@ -137,7 +143,23 @@ internal class AgentPanel(
     }
     fun render(snapshot: AgentDeskSnapshot, status: PhoneMcpBridge.Status) {
         state = snapshot; bridgeStatus = status
-        connection?.text = status.message + (if (isEditing) " · INPUT PAUSED WHILE TYPING" else "") + if (snapshot.agentActive) " · MCP agent recently active" else " · Waiting for MCP agent"
+        connection?.text = status.message + (if (isEditing) " · INPUT PAUSED WHILE TYPING" else "") +
+            if (snapshot.eventSubscribed) " · MCP EVENTS SUBSCRIBED"
+            else if (snapshot.agentActive) " · MCP agent recently active" else " · MCP inbox only"
+        eventHelp?.text = if (snapshot.eventSubscribed) {
+            when (snapshot.eventDelivery) {
+                "sending" -> "MCP event is being delivered to the subscribed ChatGPT Work/dot."
+                "accepted_by_chatgpt_webhook" -> "ChatGPT webhook accepted the event; waiting for Work/dot processing and a reply. OSRS stays open."
+                "delivery_failed", "rejected_by_callback" -> "ChatGPT event delivery failed. The message is still in the MCP inbox; check the PC connection."
+                else -> "OSRS Work/dot is subscribed to MCP Events. Send a message here without switching apps."
+            }
+        } else if (snapshot.eventsAvailable) {
+            "MCP Events available, but not subscribed. Ask an OSRS Work chat or OSRS dot to monitor overlay.message.created. Until then, requests wait in the inbox."
+        } else {
+            "MCP events are disabled on the PC. Requests are queued only. They do not start a ChatGPT turn."
+        }
+        sendButton?.text = if (snapshot.eventSubscribed) "Send to subscribed agent" else "Queue in MCP inbox"
+        shareButton?.visibility = if (snapshot.eventSubscribed) View.GONE else View.VISIBLE
         transcript?.text = snapshot.messages.joinToString("\n\n") { message ->
             val who = if (message.role == "user") "You" else if (message.role == "agent") "Connected MCP agent" else "System"
             "$who${if (message.queued) " (queued)" else ""}: ${message.text}"
@@ -161,6 +183,6 @@ internal class AgentPanel(
         (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(r.windowToken, 0)
         runCatching { windowManager.removeView(r) }
         root = null; params = null; composer = null; connection = null; transcript = null; planText = null
-        approveButton = null; rejectButton = null; isEditing = false
+        approveButton = null; rejectButton = null; sendButton = null; shareButton = null; eventHelp = null; isEditing = false
     }
 }

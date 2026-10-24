@@ -7,13 +7,14 @@ This branch is deliberately limited to **one Samsung S23, one foreground OSRS ga
 - Local Android WaspMobile Accessibility overlay and Agent Desk (review and approve bounded plans).
 - One authenticated, outbound phone-to-PC connection via private HTTPS Tailscale Serve.
 - Fifteen MCP tools for observations, one-off taps, local approvals, messages, source inspection and optional PC compilation/probing.
+- Optional [MCP 2.0 Events](MCP_EVENTS.md) can notify one subscribed OSRS Work chat/dot when the user sends a message from the overlay. This does not notify ordinary Instant chats.
 - The first phone is pinned by the bridge for its process lifetime. A second phone is rejected even after the first goes offline. A bridge restart clears the binding unless an explicit allowed device ID is configured.
 - Only a single foreground OSRS application window is eligible for remote screenshot capture or gestures. User/agent/local-script input conflicts cause work to pause or reject.
 - The legacy `DUAL_SPLIT_SCREEN` enum remains for saved-preference compatibility, but split-screen selection is hidden, persisted split settings normalize to Woodcut, and the service refuses a legacy split selection.
 
 ## Not part of this pilot
 
-No Swarm integration, multi-account rotation, Secure Folder dual-window control, bot-farm scheduling, automatic connection to an existing dot conversation, unattended gameplay beyond the approved bounded plan language, or full WaspLib-for-Android implementation. The separate `swarm-server` source is **untouched**.
+No Swarm integration, multi-account rotation, Secure Folder dual-window control, bot-farm scheduling, injection into an ordinary ChatGPT conversation, unattended gameplay beyond the approved bounded plan language, or full WaspLib-for-Android implementation. The separate `swarm-server` source is **untouched**.
 
 ## Setup (Windows PC)
 

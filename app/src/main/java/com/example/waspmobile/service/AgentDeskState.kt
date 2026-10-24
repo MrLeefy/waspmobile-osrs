@@ -13,6 +13,9 @@ internal data class PlanProgress(val id: String, val sha256: String, val title: 
 internal data class AgentDeskSnapshot(val session: String = "", val deviceId: String = "", val afterSeq: Long = 0,
     val messages: List<AgentMessage> = emptyList(), val outbox: List<AgentMessage> = emptyList(),
     val proposal: PlanOffer? = null, val progress: PlanProgress? = null, val agentActive: Boolean = false,
+    val eventsAvailable: Boolean = false, val eventSubscribed: Boolean = false,
+    val eventStatus: String = "No ChatGPT event subscription",
+    val eventDelivery: String = "not_subscribed",
     val notice: String = "Connect the MCP bridge in the main app first.")
 
 /** Thread-safe, bounded, memory-only transcript. Pairing credentials never enter this state. */
@@ -23,7 +26,7 @@ internal class AgentDeskState(private val now: () -> Long) {
     @Synchronized fun begin(session: String, deviceId: String) {
         epoch = ""
         mutable.value = AgentDeskSnapshot(session = session, deviceId = deviceId,
-            notice = "OSRS/WaspMobile mailbox. Sending does not start an agent turn; open this OSRS conversation in ChatGPT.")
+            notice = "Connect an OSRS-only ChatGPT Work chat or dot using MCP Events. Without a subscription, messages stay queued in the MCP inbox.")
     }
     @Synchronized fun disconnect() {
         cancel("Remote session disconnected", includeOffer = true)
@@ -100,6 +103,14 @@ internal class AgentDeskState(private val now: () -> Long) {
             } catch (_: Exception) {
                 s = s.copy(notice = "Rejected invalid or oversized script proposal; no input was executed.")
             }
+        }
+        val eventInfo = data.optJSONObject("events")
+        if (eventInfo != null) {
+            val available = eventInfo.optBoolean("available", false)
+            val subscribed = available && eventInfo.optBoolean("subscribed", false)
+            s = s.copy(eventsAvailable = available, eventSubscribed = subscribed,
+                eventStatus = eventInfo.optString("status", "No ChatGPT event subscription").take(200),
+                eventDelivery = eventInfo.optString("lastDelivery", "no_recent_message").take(80))
         }
         mutable.value = s
         return stop
