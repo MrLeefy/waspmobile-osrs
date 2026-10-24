@@ -49,6 +49,7 @@ internal class PhoneMcpBridge(
         service.agentDesk.begin(session, config.deviceId)
         mutableStatus.value = Status(true, false, "Connecting to Oracle…", phase = BridgePhase.CONNECTING)
         pollJob = scope.launch(Dispatchers.IO) {
+            var failures = 0
             try {
                 while (isActive && sessionId == session) {
                     try {
@@ -89,6 +90,7 @@ internal class PhoneMcpBridge(
                             result.put("deviceId", config.deviceId).put("sessionId", session).put("id", id)
                             post(config, "/device/result", result)
                         }
+                        failures = 0
                         delay(500L)
                     } catch (e: CancellationException) {
                         throw e
@@ -96,18 +98,42 @@ internal class PhoneMcpBridge(
                         withContext(Dispatchers.Main) {
                             if (sessionId == session) {
                                 sessionId = null
+                                // Invalid authentication is not transient. Stop opted-in
+                                // background reconnects until a user saves a new token.
+                                BridgeSettingsStore.setDesired(service, false)
                                 service.onRemoteDisconnected()
                                 service.remoteGate.disable()
-                                mutableStatus.value = Status(false, false, "Oracle rejected the saved token. Re-pair in Connection; your other settings are intact.", phase = BridgePhase.AUTH_REJECTED)
+                                mutableStatus.value = Status(false, false, "Oracle rejected the saved token. Re-pair in Connection; no background retries will run.", phase = BridgePhase.AUTH_REJECTED)
                             }
                         }
                         break
                     } catch (failure: Exception) {
                         if (sessionId == session) {
+                            if ((failure is RelayRejected && BridgeRetryPolicy.isPermanentHttp(failure.status)) ||
+                                failure is javax.net.ssl.SSLHandshakeException ||
+                                failure is javax.net.ssl.SSLPeerUnverifiedException) {
+                                withContext(Dispatchers.Main) {
+                                    if (sessionId == session) {
+                                        BridgeSettingsStore.setDesired(service, false)
+                                        sessionId = null
+                                        service.onRemoteDisconnected()
+                                        service.remoteGate.disable()
+                                        val explanation = if (failure is RelayRejected)
+                                            "Oracle rejected the phone profile (HTTP ${failure.status}). Check the URL and pinned Phone ID."
+                                        else "HTTPS certificate verification failed. Check Oracle's trusted certificate; never bypass verification."
+                                        mutableStatus.value = Status(false, false,
+                                            "$explanation Automatic retries stopped; reconnect after correcting it.",
+                                            phase = BridgePhase.CONFIG_ERROR)
+                                    }
+                                }
+                                break
+                            }
                             withContext(Dispatchers.Main) {
                                 service.pauseForConnectionLoss()
                                 service.agentDesk.transportLost()
                             }
+                            failures = (failures + 1).coerceAtMost(100)
+                            val retryDelay = BridgeRetryPolicy.delayMs(failures, kotlin.random.Random.nextLong(0, 501))
                             val message = when (failure) {
                                 is RelayRejected -> when (failure.status) {
                                     400, 409 -> "Oracle rejected this phone/session (HTTP ${failure.status}). Retrying safely; check the pinned Phone ID in Diagnostics."
@@ -120,9 +146,11 @@ internal class PhoneMcpBridge(
                                 is java.net.SocketTimeoutException -> "Oracle timed out. Retrying; game input is paused."
                                 else -> "Oracle connection lost. Retrying; your saved profile and draft are retained."
                             }
-                            mutableStatus.value = Status(true, false, message, phase = BridgePhase.RETRYING)
+                            mutableStatus.value = Status(true, false,
+                                "$message Next attempt in ${retryDelay / 1000}s; no actions will be replayed.",
+                                phase = BridgePhase.RETRYING)
+                            delay(retryDelay)
                         }
-                        delay(2000L)
                     }
                 }
             } finally {
