@@ -2,6 +2,10 @@
 
 **Status: draft, not production-complete.** The new [Agent Desk and mobile executor](DASHBOARD.md) are implemented; see `dashboard-results.json` for current checks and [AUDIT.md](AUDIT.md) for the preceding audit. This is not a connected ChatGPT session merely because the code exists in GitHub.
 
+## Oracle VM — now hosted
+
+The single-phone HTTPS relay is live on Oracle at https://waspmobile.129.146.39.132.sslip.io. It requires the private pairing token shown by the Oracle command sudo wasp-osrs-pair. The MCP tools remain private and need a separate ChatGPT Secure MCP Tunnel. See [Oracle deployment status](ORACLE_DEPLOYMENT_STATUS.md). The HTTPS relay is Internet-reachable with token protection, not tailnet-only.
+
 ## One-phone first
 
 **This is a single S23 / one foreground OSRS window pilot, not a mobile Swarm.** See [ONE_PHONE_PILOT.md](ONE_PHONE_PILOT.md). The bridge pins the first authenticated phone for its process lifetime; a different phone cannot replace it merely by waiting for the heartbeat to expire. Optionally set `WASP_ALLOWED_DEVICE_ID` to the Phone ID displayed in the Android app to persist that restriction across bridge restarts. A second simultaneous consent session cannot take over an online phone; disconnect locally or allow the old heartbeat to expire.

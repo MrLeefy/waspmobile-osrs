@@ -1,5 +1,7 @@
 # Oracle VM deployment: WaspMobile OSRS MCP
 
+**Live deployment:** [Oracle status and activation steps](ORACLE_DEPLOYMENT_STATUS.md). Review the isolated systemd units, operator helpers and Caddy host under [ops/](ops/).
+
 This deployment is **only** for the Samsung S23 OSRS/WaspMobile project. It does not modify the separate 2009Scape world, media vault or Swarm.
 
 ## Architecture

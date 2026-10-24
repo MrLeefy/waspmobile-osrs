@@ -1,0 +1,44 @@
+[Unit]
+Description=WaspMobile OSRS dedicated OpenAI Secure MCP Tunnel (requires activation)
+Documentation=https://developers.openai.com/api/docs/guides/secure-mcp-tunnels
+Wants=network-online.target wasp-osrs-bridge.service
+After=network-online.target wasp-osrs-bridge.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=wasposrs
+Group=wasposrs
+WorkingDirectory=/var/lib/wasp-osrs
+Environment=HOME=/var/lib/wasp-osrs
+ExecStartPre=/usr/bin/test -r /etc/wasp-osrs/tunnel-profiles/osrs-mobile.yaml
+ExecStart=/usr/local/bin/tunnel-client run --profile osrs-mobile --profile-dir /etc/wasp-osrs/tunnel-profiles --mcp.extra-headers "Authorization: file:/etc/wasp-osrs/mcp-auth-header" --mcp.discovery-extra-headers "Authorization: file:/etc/wasp-osrs/mcp-auth-header"
+Restart=on-failure
+RestartSec=7s
+TimeoutStopSec=20s
+StateDirectory=wasp-osrs
+StateDirectoryMode=0750
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectClock=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+ReadWritePaths=/var/lib/wasp-osrs
+MemoryMax=768M
+TasksMax=128
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

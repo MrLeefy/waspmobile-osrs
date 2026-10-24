@@ -16,6 +16,10 @@ This branch is deliberately limited to **one Samsung S23, one foreground OSRS ga
 
 No Swarm integration, multi-account rotation, Secure Folder dual-window control, bot-farm scheduling, injection into an ordinary ChatGPT conversation, unattended gameplay beyond the approved bounded plan language, or full WaspLib-for-Android implementation. The separate `swarm-server` source is **untouched**.
 
+## Already hosted on Oracle
+
+For a 24/7 VM bridge instead of an always-on PC, use the [Oracle deployment instructions](ORACLE_DEPLOYMENT_STATUS.md). Pair your S23 to the Oracle HTTPS origin using the VM-generated private phone token. Activate a new Secure MCP Tunnel and OSRS Work/dot subscription for live chat.
+
 ## Setup (Windows PC)
 
 From your local repository clone:

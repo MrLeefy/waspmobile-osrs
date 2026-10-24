@@ -12,6 +12,10 @@ This is **not** a second AI service, nor a modification to the OSRS APK. It uses
 
 Official reference: https://developers.openai.com/plugins/build/mcp-events
 
+## Oracle hosting
+
+The [Oracle VM bridge](ORACLE_DEPLOYMENT_STATUS.md) is running, but the new OSRS-specific OpenAI tunnel and Work/dot subscription are not connected yet. Create the dedicated Platform tunnel, then run sudo wasp-osrs-link-tunnel interactively on Oracle. The VM does not require Windows Simba or Tailscale just to host the phone relay.
+
 ## Event loop
 
 1. User signs into OSRS on the S23, enables WaspMobile Accessibility and explicitly connects the private HTTPS WaspMobile relay.
