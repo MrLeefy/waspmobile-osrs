@@ -1,5 +1,8 @@
 # Oracle VM deployment receipt — October 24, 2026
 
+**Latest deployment:** The existing Oracle Admin tunnel now exposes MCP2 WaspMobile Events with a modern-session privilege guard, and the previously paired Samsung S23 is pinned for offline event subscription. See [ORACLE_ADMIN_MCP2_UPGRADE.md](ORACLE_ADMIN_MCP2_UPGRADE.md). ChatGPT Work/dot event subscription is still not activated.
+
+
 **October 24 gateway upgrade:** The existing Oracle Admin tunnel now supports WaspMobile MCP 2.0 Events. Legacy Oracle Admin tools remain available; event-capable modern sessions expose OSRS tools and harmless diagnostics, not privileged admin shell or file access. See [ORACLE_ADMIN_MCP2_UPGRADE.md](ORACLE_ADMIN_MCP2_UPGRADE.md). The ChatGPT Work/dot subscription must still be created by an authorized agent.
 
 
