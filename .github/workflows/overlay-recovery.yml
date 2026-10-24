@@ -1,0 +1,53 @@
+name: OSRS overlay recovery verification
+on:
+  push:
+    branches: [fix/osrs-overlay-recovery-oct24]
+    paths: ['.github/workflows/overlay-recovery.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: osrs-overlay-recovery-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive exact source for independent review
+        run: git archive --format=zip HEAD -o /tmp/osrs-source.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: osrs-source-${{ github.sha }}
+          path: /tmp/osrs-source.zip
+          retention-days: 7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build and lint Android (validation APK, not a signed update)
+        id: build
+        run: bash gradlew :app:assembleDebug :app:lintDebug --no-daemon --max-workers=2
+      - name: Run complete Android unit suite
+        id: unit
+        continue-on-error: true
+        run: bash gradlew :app:testDebugUnitTest --no-daemon --max-workers=2
+      - name: Record actual outcomes
+        if: always()
+        run: |
+          echo '## OSRS recovery verification' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Build/lint: ${{ steps.build.outcome }}' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Full unit suite: ${{ steps.unit.outcome }}' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Existing S23 screenshot fixtures are absent. This job does not claim the full suite passed or physical-device validation.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'CI uses a temporary debug signing key: DO NOT install this APK over an existing installation. Preserve the original signing certificate and app data.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: osrs-verification-${{ github.sha }}
+          path: |
+            app/build/reports/
+            app/build/test-results/
+            app/build/outputs/apk/debug/
+          retention-days: 7
+          if-no-files-found: warn
