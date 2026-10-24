@@ -111,7 +111,7 @@ fun MainScreen(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "🐝 WASPMOBILE OSRS OVERLAY v5",
+                    text = "🐝 WASPMOBILE AGENT PREVIEW",
                     color = Color(0xFF38BDF8),
                     fontSize = 17.sp,
                     fontWeight = FontWeight.ExtraBold
@@ -246,7 +246,7 @@ fun MainScreen(
                 fontSize = 14.sp
             )
             Text(
-                text = "Manual opt-in each service session. Screenshots may be sent to your private PC bridge. " +
+                text = "Open AI in the floating HUD for messages and script approvals. Manual opt-in each service session. Screenshots may be sent to your private PC bridge. " +
                     "Use an HTTPS Tailscale Serve URL and a private 32+ character token. " +
                     "Android 14+ only. Single foreground OSRS window required; split-screen remote control is disabled.",
                 color = Color(0xFFCBD5E1),

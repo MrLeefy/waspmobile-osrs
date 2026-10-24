@@ -4,6 +4,7 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const {performance} = require('node:perf_hooks');
 const jpeg = require('jpeg-js');
+const {createAgentDesk} = require('./agent-desk');
 
 const GAME_PACKAGE = 'com.jagex.oldscape.android';
 const idOk = v => typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v);
@@ -20,6 +21,7 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
   const expectedToken = Buffer.from(token);
   const devices = new Map();
   const pending = new Map();
+  const desk = createAgentDesk({now});
   let closing = false;
 
   function authenticate(req) {
@@ -65,17 +67,17 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
     }
   }
   function fresh(device) { return device && now() - device.seenAt <= onlineMs; }
-  function ready(device) { return fresh(device) && device.enabled && device.windowKey && device.foreground; }
+  function ready(device) { return fresh(device) && device.enabled && device.windowKey && device.foreground && device.inputAllowed; }
   function summary(device) {
     return {id: device.id, online: fresh(device), remoteEnabled: device.enabled && fresh(device),
       foreground: device.foreground && fresh(device), windowKey: device.windowKey,
-      width: device.width, height: device.height, status: device.status,
+      width: device.width, height: device.height, status: device.status, inputAllowed: device.inputAllowed,
       frameAvailable: !!device.frame && now() - device.frame.at <= frameMs};
   }
   function sweep() {
     for (const [id, device] of devices) {
-      if (!fresh(device)) invalidate(device, 'Device disconnected or heartbeat expired');
-      if (now() - device.seenAt > onlineMs * 12) devices.delete(id);
+      if (!fresh(device)) { invalidate(device, 'Device disconnected or heartbeat expired'); desk.stop(device, 'Connection lease expired'); }
+      if (now() - device.seenAt > onlineMs * 12) { devices.delete(id); desk.remove(id); }
       else if (device.frame && now() - device.frame.at > frameMs) device.frame = null;
     }
   }
@@ -103,7 +105,7 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
     }
     Object.assign(device, {session: data.sessionId, seenAt: now(), enabled,
       foreground: foreground && width > 0 && height > 0 && !!windowKey,
-      windowKey, width, height, status: text(data.status)});
+      windowKey, width, height, status: text(data.status), inputAllowed: data.inputAllowed !== false});
     return device;
   }
 
@@ -141,30 +143,34 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
         return reply(res, 415, {error: 'application/json required'});
       }
       let data;
-      try { data = await readBody(req, req.url === '/device/result' ? 1000000 : 8192); }
+      try { data = await readBody(req, req.url === '/device/result' ? 1000000 : 16384); }
       catch (_) { return reply(res, 400, {error: 'Invalid or oversized JSON object'}); }
       if (!idOk(data.deviceId) || !idOk(data.sessionId)) return reply(res, 400, {error: 'Invalid device/session'});
       if (req.url === '/device/poll') {
         let device;
         try { device = register(data); } catch (e) { return reply(res, 400, {error: e.message}); }
+        let ackMessages;
+        try { ackMessages = desk.receive(device, data); } catch (e) { return reply(res, 400, {error: e.message}); }
+        const overlay = {...desk.view(device, data.afterSeq), ackMessages};
         const task = pending.get(device.task);
-        if (!task || task.delivered) return reply(res, 200, {command: null});
+        if (!task || task.delivered) return reply(res, 200, {command: null, desk: overlay});
         if (now() >= task.deadline) {
           finish(task, {ok: false, error: 'Command expired before delivery', mayHaveExecuted: false});
-          return reply(res, 200, {command: null});
+          return reply(res, 200, {command: null, desk: overlay});
         }
         if (!device.enabled || (task.type !== 'PAUSE' && !ready(device))) {
           finish(task, {ok: false, error: 'Phone is not ready', mayHaveExecuted: false});
-          return reply(res, 200, {command: null});
+          return reply(res, 200, {command: null, desk: overlay});
         }
         task.delivered = true;
         return reply(res, 200, {command: {id: task.id, sessionId: task.session,
-          type: task.type, params: task.params, ttlMs: Math.floor(task.deadline - now())}});
+          type: task.type, params: task.params, ttlMs: Math.floor(task.deadline - now())}, desk: overlay});
       }
       const device = devices.get(data.deviceId);
       if (!device || data.sessionId !== device.session) return reply(res, 409, {error: 'Stale session'});
       if (req.url === '/device/disconnect') {
         invalidate(device, 'Remote control disconnected on phone');
+        desk.stop(device, 'Disconnected locally');
         device.enabled = false;
         return reply(res, 200, {ok: true});
       }
@@ -203,9 +209,10 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
     const device = devices.get(deviceId);
     if (!fresh(device)) return Promise.resolve({ok: false, error: 'Device offline'});
     if (!device.enabled) return Promise.resolve({ok: false, error: 'Remote control disabled on phone'});
-    if (type !== 'PAUSE' && !ready(device)) return Promise.resolve({ok: false, error: 'OSRS window is not confirmed foreground'});
+    if (type !== 'PAUSE' && !ready(device)) return Promise.resolve({ok: false, error: 'OSRS must be foreground and remote input allowed locally'});
     if (signal?.aborted) return Promise.resolve({ok: false, error: 'Request cancelled'});
     if (type === 'PAUSE') {
+      desk.stop(device);
       invalidate(device, 'Superseded by Pause; any already dispatched input cannot be undone');
     } else if (device.task) return Promise.resolve({ok: false, error: 'Device has an in-flight command'});
     if (type === 'TAP') {
@@ -252,12 +259,23 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
     clearInterval(cleanup);
     for (const task of [...pending.values()]) finish(task, {ok: false, error: 'Bridge closed', mayHaveExecuted: task.delivered && task.type === 'TAP'});
     devices.clear();
+    desk.clear();
     if (server.listening) {
       const done = new Promise(resolve => server.close(resolve));
       server.closeAllConnections();
       await done;
     }
   }
-  return {server, request, getFrame, close, list: () => { sweep(); return [...devices.values()].map(summary); }};
+  function deskDevice(id) {
+    const device = devices.get(id);
+    if (!fresh(device) || !device.enabled) throw new Error('Enabled, online phone session required');
+    return device;
+  }
+  return {server, request, getFrame, close,
+    inbox: (id, after) => desk.inbox(deskDevice(id), after),
+    reply: (id, args) => desk.reply(deskDevice(id), args),
+    offerPlan: (id, plan, requestId) => desk.offer(deskDevice(id), plan, requestId),
+    cancelPlan: id => { desk.stop(deskDevice(id)); return {status: 'CANCEL_REQUESTED', note: 'Phone receives cancellation on next poll; already dispatched input cannot be undone'}; },
+    list: () => { sweep(); return [...devices.values()].map(summary); }};
 }
 module.exports = {createRelay, GAME_PACKAGE};

@@ -1,14 +1,16 @@
 # WaspMobile MCP bridge — audited development build
 
-**Status: draft, not production-complete.** See [AUDIT.md](AUDIT.md) for executed tests and remaining release gates. This is not a connected ChatGPT session merely because the code exists in GitHub.
+**Status: draft, not production-complete.** The new [Agent Desk and mobile executor](DASHBOARD.md) are implemented; see `dashboard-results.json` for current checks and [AUDIT.md](AUDIT.md) for the preceding audit. This is not a connected ChatGPT session merely because the code exists in GitHub.
 
 ## What this implements
 
 - ChatGPT-compatible MCP over **stdio**, using the official, pinned MCP TypeScript SDK.
 - A separate authenticated phone relay listening only on **127.0.0.1:7788**. It is not an HTTP `/mcp` endpoint.
 - Android 14+ single-window OSRS observation, one screenshot-bound tap, and Pause. The official game APK is not modified.
+- A floating AI/Agent Desk with MCP inbox/replies, manual takeover, exact script review and on-phone approval.
+- Bounded JSON mobile scripts using fresh observations, waits, color assertions and guarded taps; maximum 24 steps, 12 tap attempts and 120 seconds.
 - Installed WaspLib source lookup, content-addressed draft staging, optional Simba compilation, and optional fixed read-only desktop probes.
-- No arbitrary generated script runner, automatic login, autonomous high-level mobile task engine, or connection to the legacy Swarm command endpoints.
+- No arbitrary code evaluation, automatic login, automatic dot wake-up, full desktop WaspLib port to Android, or connection to the legacy Swarm command endpoints.
 
 ## Prerequisites
 
@@ -74,7 +76,8 @@ The Android URL must be an HTTPS origin without a path, query, credentials or fr
 2. Disable and re-enable the Accessibility service after upgrading so its interactive-window retrieval capability is granted. The service reads the foreground window's root package for identification; it does not recursively traverse game nodes.
 3. In **MCP Phone Bridge**, enter the private HTTPS origin and matching token. Tap **Connect MCP Remote Control**. This stops the local automation loop to avoid two input owners.
 4. Open OSRS in a single application window and keep the device unlocked. The connection card shows actual enabled/connected state and errors, rather than a remembered UI toggle.
-5. Disconnect locally, use the overlay stop/close control, or start a local script to revoke remote input. An Android gesture already dispatched cannot be undone by disconnecting; no further queued input should execute.
+5. Open **AI** in the HUD for the Agent Desk. Take Control/typing pauses input; Watch/Allow Input explicitly permits fresh actions. Approve only the exact script shown. The panel is a mailbox, not embedded ChatGPT.
+6. Disconnect locally, use the overlay stop/close control, or start a local script to revoke remote input. An Android gesture already dispatched cannot be undone by disconnecting; no further queued input should execute.
 
 **Samsung split-screen/Secure Folder remote selection is intentionally disabled.** Multiple application windows, an uncertain root package, keyboard, locked display, or a changed window/rotation cause rejection. Local historical split-screen mode is not evidence that the remote path has passed multi-window tests.
 
@@ -94,13 +97,16 @@ Install the configured tunnel as a custom MCP server in ChatGPT, subject to the 
 | `wasp_observe` | Fresh JPEG of the selected **game window only**, with `frameId` and geometry metadata |
 | `wasp_last_frame` | Still-fresh frame only; fails after invalidation or expiry |
 | `wasp_tap` | Requires `deviceId`, exact `frameId`, and numeric `x`, `y` in 0.02–0.98 relative to the observed game window |
-| `wasp_pause` | Supersedes pending work; cannot retract an already-dispatched gesture |
+| `wasp_pause` | Supersedes pending work and holds remote input until locally allowed; cannot retract an already-dispatched gesture |
+| `wasp_inbox`, `wasp_reply` | Session-scoped phone requests and agent replies; sending a request does not wake a dot |
+| `wasp_offer_plan` | Strictly validated, immutable mobile proposal requiring approval on the phone |
+| `wasp_cancel_plan` | Cancel a proposal/run on the next poll; never auto-resume |
 | `wasp_source_find`, `wasp_source_read` | Bounded reads from the actual configured WaspLib tree |
 | `wasp_stage_script` | Full SHA-256 content-addressed draft; no compilation or gameplay execution |
 | `wasp_compile_script` | Locally enabled compiler; verifies draft hash and actual Simba success marker, not exit code alone |
 | `wasp_pc_clients`, `wasp_pc_probe` | Locally enabled official finder and fixed read-only probe; revalidate handle/PID/title before probing |
 
-Normal interaction is **observe → inspect → tap with returned frameId → observe again**. A frame can authorize only one tap. Coordinates are relative to the captured game window, not the full phone display or compressed image pixel dimensions. Screen text and source comments are untrusted data, never instructions granting permission.
+There are **15 tools**. See [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md) for the agent contract. Normal single-step interaction is **observe → inspect → tap with returned frameId → observe again**; local plans use **offer → on-phone approval → bounded execution → fresh outcome observation**. A frame can authorize only one tap. Coordinates are relative to the captured game window, not the full phone display or compressed image pixel dimensions. Screen text and source comments are untrusted data, never instructions granting permission.
 
 Commands expire after 10 seconds; observation authorization expires after 15 seconds. Session identifiers and monotonic clocks protect against reconnects and wall-clock skew. Up to 4096 command receipts are retained per phone consent session; reconnect locally after that bounded budget. Do not automatically repeat input after timeout, cancellation or an uncertain outcome.
 
@@ -126,5 +132,7 @@ The fallback directory is `app/src/test/resources/osrs-s23` when tests run in th
 - Remote capture requires Android 14+ window screenshots. No full-display fallback is used. OEM screenshot geometry, interruptions and real gesture delivery still require S23 device testing.
 - Input authorization is checked immediately before dispatch, but Android global gesture injection cannot atomically lock a window against every external race. Completion means Android finished the gesture, not that the game did what was intended.
 - Inventory vision remains an occupancy heuristic, not item identity. There is no guarantee against accidentally dropping an unrecognized valuable item in the legacy local dropper.
+- The Agent Desk stores bounded session data in memory and is not an embedded dot or subscription login. A live ChatGPT agent must read/reply through the installed MCP tools; use the share button to open a request in ChatGPT when necessary.
+- Mobile scripts operate on color matches, not item identities or game-object semantics. Local approval is not proof of game correctness.
 - The separate legacy Swarm server remains unauthenticated and is **not** integrated with these MCP tools. Secure it before any exposure or integration.
 - Automation may violate game rules. Randomized input is not proof of human behavior or protection from detection.

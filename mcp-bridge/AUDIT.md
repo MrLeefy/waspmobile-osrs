@@ -1,5 +1,7 @@
 # Verification audit — 2026-10-23
 
+**Historical audit:** the subsequent Agent Desk / approved mobile executor revision is documented in [DASHBOARD.md](DASHBOARD.md), with current checks in [dashboard-results.json](dashboard-results.json). The table below describes the earlier hardening revision, not the latest expanded suite.
+
 ## Verdict
 
 **The original PR was not complete or release-ready.** This revision fixes reproducible bridge problems, builds an Android debug APK, and adds exercised regression coverage. The draft must remain unmerged until the missing fixture tests and actual Windows/S23/tunnel validation are completed. No live gameplay, account login, APK installation on the phone, or production deployment was performed during this audit.

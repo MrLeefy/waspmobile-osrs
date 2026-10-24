@@ -6,6 +6,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -41,19 +42,24 @@ internal class PhoneMcpBridge(
         settings = config
         sessionId = session
         service.remoteGate.enable(session)
+        service.agentDesk.begin(session, config.deviceId)
         mutableStatus.value = Status(true, false, "Connecting to private bridge")
         pollJob = scope.launch(Dispatchers.IO) {
             try {
                 while (isActive && sessionId == session) {
                     try {
-                        val payload = withContext(Dispatchers.Main) { service.remoteDeviceStatus() }
+                        val payload = withContext(Dispatchers.Main) { service.agentDesk.attachToPoll(service.remoteDeviceStatus()) }
                             .put("deviceId", config.deviceId).put("sessionId", session)
                             .put("remoteEnabled", true)
                         val pollStartedAt = SystemClock.elapsedRealtime()
                         val answer = post(config, "/device/poll", payload)
                         currentCoroutineContext().ensureActive()
                         if (sessionId != session) break
-                        mutableStatus.value = Status(true, true, "Connected; remote input requires a fresh game frame")
+                        withContext(Dispatchers.Main) {
+                            service.recordRelayContact()
+                            answer.optJSONObject("desk")?.let { service.acceptDeskPacket(session, it) }
+                        }
+                        mutableStatus.value = Status(true, true, "Connected to private MCP bridge")
                         val command = answer.optJSONObject("command")
                         if (command != null) {
                             val id = command.optString("id")
@@ -76,10 +82,13 @@ internal class PhoneMcpBridge(
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: AuthRejected) {
-                        if (sessionId == session) {
-                            sessionId = null
-                            service.remoteGate.disable()
-                            mutableStatus.value = Status(false, false, "Pairing token rejected; reconnect locally")
+                        withContext(Dispatchers.Main) {
+                            if (sessionId == session) {
+                                sessionId = null
+                                service.onRemoteDisconnected()
+                                service.remoteGate.disable()
+                                mutableStatus.value = Status(false, false, "Pairing token rejected; reconnect locally")
+                            }
                         }
                         break
                     } catch (_: Exception) {
@@ -91,10 +100,13 @@ internal class PhoneMcpBridge(
                     }
                 }
             } finally {
-                if (sessionId == session) {
-                    sessionId = null
-                    service.remoteGate.disable()
-                    mutableStatus.value = Status(false, false, "Disconnected")
+                withContext(NonCancellable + Dispatchers.Main) {
+                    if (sessionId == session) {
+                        sessionId = null
+                        service.onRemoteDisconnected()
+                        service.remoteGate.disable()
+                        mutableStatus.value = Status(false, false, "Disconnected")
+                    }
                 }
             }
         }
@@ -105,6 +117,7 @@ internal class PhoneMcpBridge(
         val oldSession = sessionId
         val oldSettings = settings
         sessionId = null
+        service.onRemoteDisconnected()
         service.remoteGate.disable()
         pollJob?.cancel()
         pollJob = null
@@ -148,7 +161,7 @@ internal class PhoneMcpBridge(
                     check(SystemClock.elapsedRealtime() - started <= 8000) { "Relay response timed out" }
                     val count = input.read(buffer)
                     if (count < 0) break
-                    check(output.size() + count <= 8192) { "Relay response too large" }
+                    check(output.size() + count <= 32768) { "Relay response too large" }
                     output.write(buffer, 0, count)
                 }
             }

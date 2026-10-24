@@ -1,0 +1,303 @@
+{
+  "startingCommit": "42f34a56e752534c8d8b796c203bdd669296f1cc",
+  "recordedAtUtc": "2026-10-24T00:07:19.942284+00:00",
+  "scope": "Agent Desk, MCP inbox/reply/plan tools and locally approved bounded mobile execution",
+  "node": {
+    "tests": 78,
+    "pass": 78,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "exitCode": 0,
+    "officialMcpClientStdioIntegration": true,
+    "httpMailboxRoundTrip": true
+  },
+  "android": {
+    "assembleDebug": "passed",
+    "lintDebug": "passed",
+    "lintSeverityCounts": {
+      "Warning": 44
+    },
+    "unitTestTotals": {
+      "tests": 114,
+      "failures": 11,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 103
+    },
+    "newDashboardAndExecutorTests": {
+      "tests": 30,
+      "passed": 30,
+      "failures": 0
+    },
+    "suites": [
+      {
+        "suite": "com.example.waspmobile.engine.AdversarialM1Test",
+        "tests": 13,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.engine.AdversarialM2Test",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.engine.AdversarialM4ClusterTest",
+        "tests": 8,
+        "failures": 2,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": [
+          {
+            "test": "testRectConstructorZeroingBugInJvmEnvironment",
+            "message": "java.lang.AssertionError: Screenshot 2 file must exist: src/test/resources/osrs-s23/media_1792780906471_c6388f0e.jpg"
+          },
+          {
+            "test": "testFindTargetClustersScreenshot2EmpiricalVerification",
+            "message": "java.lang.AssertionError: Screenshot 2 file must exist: src/test/resources/osrs-s23/media_1792780906471_c6388f0e.jpg"
+          }
+        ]
+      },
+      {
+        "suite": "com.example.waspmobile.engine.AdversarialM4Test",
+        "tests": 8,
+        "failures": 5,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": [
+          {
+            "test": "testDetectFilledInventorySlotsOnScreenshot2ExactTwoLogs",
+            "message": "java.lang.AssertionError: Screenshot file must exist: src/test/resources/osrs-s23/media_1792780906471_c6388f0e.jpg"
+          },
+          {
+            "test": "testFindTargetClustersPlayerCenterExclusionAnd5x5Cap",
+            "message": "java.lang.AssertionError: Screenshot file must exist: src/test/resources/osrs-s23/media_1792780906471_c6388f0e.jpg"
+          },
+          {
+            "test": "testIsInventoryTabOpenAcrossAllThreeScreenshots",
+            "message": "java.lang.AssertionError: Screenshot file must exist: src/test/resources/osrs-s23/media_1792780906388_c77464df.jpg"
+          },
+          {
+            "test": "testDetectFilledInventorySlotsEnvelopeToleranceFuzzing",
+            "message": "java.lang.AssertionError: Screenshot file must exist: src/test/resources/osrs-s23/media_1792780906471_c6388f0e.jpg"
+          },
+          {
+            "test": "testIsTapToDropActiveOnScreenshots",
+            "message": "java.lang.AssertionError: Screenshot file must exist: src/test/resources/osrs-s23/media_1792780906471_c6388f0e.jpg"
+          }
+        ]
+      },
+      {
+        "suite": "com.example.waspmobile.engine.BiometricStateHardeningTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.engine.CoordinateCutoutStressTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.engine.MobileVisionEngineTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.engine.VerifiedInventoryDropTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.service.AgentDeskStateTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.service.AgentPrimaryActionTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.service.MobilePlanRunnerTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.service.MobilePlanTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.service.PhoneMcpBridgeTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.service.RemoteSessionGateTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.ui.main.MainScreenViewModelTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.vision.RealScreenshotVisionTest",
+        "tests": 4,
+        "failures": 4,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": [
+          {
+            "test": "testIsInventoryTabOpen_AcrossScreenshots",
+            "message": "java.lang.AssertionError: Screenshot 1 file must exist: <repo>/app/src/test/resources/osrs-s23/media_1792780906388_c77464df.jpg"
+          },
+          {
+            "test": "testIsTapToDropActive_Screenshot2",
+            "message": "java.lang.AssertionError: Screenshot 1 file must exist: <repo>/app/src/test/resources/osrs-s23/media_1792780906388_c77464df.jpg"
+          },
+          {
+            "test": "testFindTargetClusters_TreeCanopy_Screenshot2",
+            "message": "java.lang.AssertionError: Screenshot 1 file must exist: <repo>/app/src/test/resources/osrs-s23/media_1792780906388_c77464df.jpg"
+          },
+          {
+            "test": "testDetectFilledInventorySlots_Screenshot2_ExactTwoLogs",
+            "message": "java.lang.AssertionError: Screenshot 1 file must exist: <repo>/app/src/test/resources/osrs-s23/media_1792780906388_c77464df.jpg"
+          }
+        ]
+      }
+    ],
+    "apk": {
+      "versionCode": 3,
+      "versionName": "2.1.0-agent-preview",
+      "sha256": "8eae0dfc99f01bcf01b989a1698259dd8c7e49c8ad22efe00e299780dd85eebf",
+      "bytes": 31053096,
+      "installedOnPhone": false
+    }
+  },
+  "contractParity": {
+    "sharedCases": 21,
+    "nodeAndKotlinValidated": true,
+    "type": "synthetic plan data, not empirical game screenshots"
+  },
+  "dependencyAudit": {
+    "command": "npm audit --omit=dev --audit-level=high",
+    "reportedVulnerabilities": 0
+  },
+  "limits": {
+    "maxSteps": 24,
+    "maxTapAttempts": 12,
+    "maxRuntimeMs": 120000,
+    "requiresLocalApproval": true
+  },
+  "remainingValidation": [
+    "11 original S23 screenshot-fixture tests",
+    "physical Samsung S23 overlay/input behavior",
+    "actual Windows Simba installation",
+    "actual ChatGPT custom MCP tunnel and dot workflow"
+  ],
+  "notImplemented": [
+    "embedded Squishy conversation or automatic dot wake-up",
+    "full WaspLib Android port",
+    "remote split-screen/Secure Folder selection",
+    "legacy Swarm authentication/integration"
+  ],
+  "liveGameControlAttempted": false,
+  "sourceFileSha256": {
+    "app/build.gradle.kts": "d528939ee991d7f5aaa50ded50284065f7dbc2658ca3d4d738e1202ce00463fb",
+    "app/src/androidTest/java/com/example/waspmobile/ui/main/MainScreenTest.kt": "5f2a9a495d6c19e47ec596b1d43b53ddcad6889e9a1f420ec041c09d7b43f344",
+    "app/src/main/java/com/example/waspmobile/MainActivity.kt": "a039890bb124b05ce03b2194869c00bd552f3cbc2d9b4a9a3ff0774aa6c8420e",
+    "app/src/main/java/com/example/waspmobile/Navigation.kt": "64898dda6798da176260731e42bd8bccca384be1c73daf4b0e24ea1a84ac82bd",
+    "app/src/main/java/com/example/waspmobile/NavigationKeys.kt": "9ba06148b20443dc9bcd5c47c84fa618b0c7be88e59b4e090d9ed1d321b2d42c",
+    "app/src/main/java/com/example/waspmobile/data/DataRepository.kt": "c0304370634432470b6fe50a151f863ef52a1719946091584f345855025ec76a",
+    "app/src/main/java/com/example/waspmobile/engine/HumanTouchEngine.kt": "b1dc5ba53556219fb4ecf485fc87c4e1b230c299ffb2e7d846ea39ff33ac5f10",
+    "app/src/main/java/com/example/waspmobile/engine/MobileVisionEngine.kt": "dfa11154ef46fe0789f423f26ae781eb3a6d6ffbab0e4eea7dfc62c91bb202bb",
+    "app/src/main/java/com/example/waspmobile/engine/VerifiedInventoryDrop.kt": "7e1631798886a641a3974627718605cc7f75b985fd2067bcac119667ced20f86",
+    "app/src/main/java/com/example/waspmobile/engine/WaspMobileState.kt": "4aa78b7a72b8563c10614fd6ee0a3ed7d372cfc58c5e9e71b93a969252046ded",
+    "app/src/main/java/com/example/waspmobile/service/AgentDeskState.kt": "b4504b9016303b81ebb0898b1715c667810a6e038402a4729e0180edf3c267e4",
+    "app/src/main/java/com/example/waspmobile/service/AgentPanel.kt": "d32317ee2ff50829cbdc6902e2341c7c20d2301c30072d24b2c839948186f177",
+    "app/src/main/java/com/example/waspmobile/service/AgentPrimaryAction.kt": "0f8bbe7caaf72cb2953263819c5d39c2110932aec8bc08daf29c03adb86a4719",
+    "app/src/main/java/com/example/waspmobile/service/MobilePlan.kt": "1ea885bea64cff2e4695223fc2366d4362ac3f5a5334210741d4c73bd71e285e",
+    "app/src/main/java/com/example/waspmobile/service/MobilePlanRunner.kt": "72b6bc2f50367e0d17046104f12a4b68e6582d6ee7296a8988a115f5d9cc353c",
+    "app/src/main/java/com/example/waspmobile/service/PhoneMcpBridge.kt": "f8e7fe0bad1dc9a725a38928ee94573ccaf6c167f0d8377e8815e796a468ce9a",
+    "app/src/main/java/com/example/waspmobile/service/RemoteSessionGate.kt": "cb7115248e6add5acbecb148fd7bcb3111c6436be815afa4f81f18cc424e0e1b",
+    "app/src/main/java/com/example/waspmobile/service/StoreInstallResultReceiver.kt": "9c52059c5b99cb5680d15678be36a1931fbaec0269454e249d8f41a648651dcf",
+    "app/src/main/java/com/example/waspmobile/service/WaspAccessibilityService.kt": "05d0c1f77046926e6b24cdb6e38e6c62a72b5df90e3cce7208ac7be0688b88ed",
+    "app/src/main/java/com/example/waspmobile/theme/Color.kt": "702d32e494c0acd898d45a70e6027f6bf470a6a341b6fb74945ef401bad1fa13",
+    "app/src/main/java/com/example/waspmobile/theme/Theme.kt": "e97eae49659fbff38d8ddef24399d22c7dfa1a3184373341364b15012639f34d",
+    "app/src/main/java/com/example/waspmobile/theme/Type.kt": "e1cef77b2fbb3286773cee550c7f77f8aeaf074605e3c7360f25035a1df89b2d",
+    "app/src/main/java/com/example/waspmobile/ui/main/MainScreen.kt": "d321757484964d9c73b14260a66f7cef6d5c4c6a30d1e4dc55e417a6fa1b5aef",
+    "app/src/main/java/com/example/waspmobile/ui/main/MainScreenViewModel.kt": "7b4f77858ec168cac9712d1135a3a14ba0f269b8cdfba1e54eff1dd0365f9a92",
+    "app/src/test/java/com/example/waspmobile/engine/AdversarialM1Test.kt": "d0a84ab59133ad9a24028638b8858a0c18ac8942d54a6c222a6b62d424cb42ef",
+    "app/src/test/java/com/example/waspmobile/engine/AdversarialM2Test.kt": "f29edf5fadbd5df7a3988f7790f8b71b4fb6aaa3a5fde67c98b4a3e5f761eb11",
+    "app/src/test/java/com/example/waspmobile/engine/AdversarialM4ClusterTest.kt": "34707df95ebbf35e67f280e752d8c3228dbdd99c9dfccb0e2095dfbef1a6121f",
+    "app/src/test/java/com/example/waspmobile/engine/AdversarialM4Test.kt": "640bdf74a51ad3c012a20e86a35e2f505f68fcf1a6f005bbfbdf653f33f43714",
+    "app/src/test/java/com/example/waspmobile/engine/BiometricStateHardeningTest.kt": "1d2c57f64e9f54b13e1ca8472268f227afd954323249c5a3de4c6eac4b7e18c2",
+    "app/src/test/java/com/example/waspmobile/engine/CoordinateCutoutStressTest.kt": "eda453aa39b17d92b3826f57be43e427e02675bf638c9336ab24f9219aaffdbd",
+    "app/src/test/java/com/example/waspmobile/engine/MobileVisionEngineTest.kt": "a5ec40a9b0a4d749d47f5438657752c53ff9883e554be8ca51e6366fa733a560",
+    "app/src/test/java/com/example/waspmobile/engine/VerifiedInventoryDropTest.kt": "9ce978939ff00ad2e3ca36deb3b0c7c88370181472bb5cb3c92a2eeb2e62e219",
+    "app/src/test/java/com/example/waspmobile/service/AgentDeskStateTest.kt": "bb22692c9436d74d557dd8296df2aa71fd8b65e0a472738efb4e69da77afe033",
+    "app/src/test/java/com/example/waspmobile/service/AgentPrimaryActionTest.kt": "ae22a49d79ab1dbcb1b06c49582ea444be3aaa9c29d97cf7407564094298d351",
+    "app/src/test/java/com/example/waspmobile/service/MobilePlanRunnerTest.kt": "468f5fe7769d02e01e85d137e635ffd026502739ca83cae63d2fe1506f4d2a66",
+    "app/src/test/java/com/example/waspmobile/service/MobilePlanTest.kt": "d263c7ede67e825c8bab580161d39df070e9d1ba43e1bbcb18827388ecf52796",
+    "app/src/test/java/com/example/waspmobile/service/PhoneMcpBridgeTest.kt": "829c39ff7200b91cb1e7f23318c0b0a174cc479fe7290ff9d9ec68d56e69264a",
+    "app/src/test/java/com/example/waspmobile/service/RemoteSessionGateTest.kt": "4252b4f780adce338b6cae57c4e485cd62e79963ae7b30efcb3f068856d6294c",
+    "app/src/test/java/com/example/waspmobile/ui/main/MainScreenViewModelTest.kt": "0d3577dfa579fc9c8ee7df10b901ef62dc8eb647b7aa236172c997b09d9fc2d6",
+    "app/src/test/java/com/example/waspmobile/vision/RealScreenshotVisionTest.kt": "f3768cd14c74ed3781b20fec8cd0b017840298fd08ab242435a6701e87d046e2",
+    "app/src/test/java/com/example/waspmobile/vision/ScreenshotFixtures.kt": "ceb4bc5f4234739670e906ffcea6f661d63c607010ba0d6ca381d6b8d0da44ea",
+    "build.gradle.kts": "432ce5820bca46b9d91ddff8cb8dde64ea26b455b637e96c3e0f059cfeeb4f56",
+    "contracts/mobile-plan-v1-cases.json": "accb879a9b1670bf047cedc2aa9a6fce72027c232a82b9a2cad9906653361508",
+    "mcp-bridge/agent-desk.js": "b48f25b20a69955dce89a512991d17216555eeab5c4f2f6f7d21b058ff97eb05",
+    "mcp-bridge/agent-desk.test.js": "bc1747959545cc0057cc726b1ee59ad639c571488891e59a536c3bf93be59a56",
+    "mcp-bridge/bridge.js": "8381308c819184d7cd0d373bf06f5f38acad446fc06be1f50c73394c245f1110",
+    "mcp-bridge/bridge.test.js": "5285f4c0b49bb9046db429a15687c60452a05df3db58c819e6fe044cc1faba85",
+    "mcp-bridge/desktop.js": "2068531e8c3bcbd634a18fad2e55ffc13084c9b8494d17d0543bae0103994898",
+    "mcp-bridge/desktop.test.js": "039b9029ba48d079795e43283c5ec23c14cb669e684a7f5eefb0cc42c964e45e",
+    "mcp-bridge/protocol.test.js": "3c9990508be1ca5829e39888d832ce617fd13a4162d76468c1cc3a866a26518a",
+    "mcp-bridge/relay.js": "ef1efc8e2df563c8a28cd49a6cfb579b5c62622074108cc9e39ad856165aeb7f",
+    "settings.gradle.kts": "701962ea8b8a096fea3122a2fe713bc92ec75ce35e8e4aba336906b6aaa84489",
+    "swarm-server/public/sw.js": "af36e56ed1e1aeebf167185953de2f65843f40803fe95f69ca805f924bcd351b",
+    "swarm-server/server.js": "6cdb934b200a4931d458d2708064e0b32449ee85ffe2b1d1a1e7a4d28396ac1e",
+    "swarm-server/verify_swarm.js": "7f9cc0bd37d59d47d41680ad6cba248412a0ec68044c4feebec59bcc12e50e06"
+  }
+}

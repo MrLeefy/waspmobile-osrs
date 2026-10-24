@@ -20,10 +20,10 @@ async function connected(t) {
   t.after(async () => { await client.close(); await bridge.close(); await fs.rm(root, {recursive: true, force: true}); });
   return {client, bridge};
 }
-test('official SDK client negotiates and discovers all eleven tools', async t => {
+test('official SDK client negotiates and discovers all fifteen tools', async t => {
   const {client} = await connected(t);
   const {tools} = await client.listTools();
-  assert.equal(tools.length, 11);
+  assert.equal(tools.length, 15);
   assert.equal(tools.find(x => x.name === 'wasp_tap').annotations.destructiveHint, true);
   assert.equal(tools.find(x => x.name === 'wasp_source_read').annotations.readOnlyHint, true);
   const result = await client.callTool({name: 'wasp_devices', arguments: {}});
@@ -52,7 +52,7 @@ test('actual stdio process serves an official SDK client', {timeout: 8000}, asyn
   const client = new Client({name: 'stdio-integration', version: '1.0.0'});
   t.after(() => client.close());
   await client.connect(transport);
-  assert.equal((await client.listTools()).tools.length, 11);
+  assert.equal((await client.listTools()).tools.length, 15);
   assert.deepEqual(JSON.parse((await client.callTool({name: 'wasp_devices', arguments: {}})).content[0].text), []);
 });
 test('stdio EOF shuts down relay without orphaning the process', {timeout: 6000}, async t => {

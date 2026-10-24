@@ -1,0 +1,758 @@
+[
+  {
+    "name": "observation",
+    "valid": true,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "observe",
+          "label": "Capture current game window"
+        }
+      ]
+    }
+  },
+  {
+    "name": "bounded-wait",
+    "valid": true,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "wait",
+          "label": "Short bounded pause",
+          "ms": 200
+        },
+        {
+          "op": "observe",
+          "label": "Check again"
+        }
+      ]
+    }
+  },
+  {
+    "name": "guarded-tap",
+    "valid": true,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        }
+      ]
+    }
+  },
+  {
+    "name": "wrong-version",
+    "valid": false,
+    "plan": {
+      "version": 2,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "observe",
+          "label": "Capture current game window"
+        }
+      ]
+    }
+  },
+  {
+    "name": "blank-title",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "observe",
+          "label": "Capture current game window"
+        }
+      ]
+    }
+  },
+  {
+    "name": "too-long-runtime",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 120001,
+      "steps": [
+        {
+          "op": "observe",
+          "label": "Capture current game window"
+        }
+      ]
+    }
+  },
+  {
+    "name": "zero-runtime",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 0,
+      "steps": [
+        {
+          "op": "observe",
+          "label": "Capture current game window"
+        }
+      ]
+    }
+  },
+  {
+    "name": "empty-steps",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": []
+    }
+  },
+  {
+    "name": "too-many-steps",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        },
+        {
+          "op": "observe",
+          "label": "x"
+        }
+      ]
+    }
+  },
+  {
+    "name": "too-many-taps",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        },
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        },
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        },
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        },
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        },
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        },
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        },
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        },
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        },
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        },
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        },
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        },
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        }
+      ]
+    }
+  },
+  {
+    "name": "unknown-op",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "shell",
+          "label": "x",
+          "code": "echo no"
+        }
+      ]
+    }
+  },
+  {
+    "name": "arbitrary-code",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "observe",
+          "label": "Capture current game window"
+        }
+      ],
+      "code": "doSomething()"
+    }
+  },
+  {
+    "name": "no-observation-budget",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "wait",
+          "label": "x",
+          "ms": 5000
+        }
+      ]
+    }
+  },
+  {
+    "name": "string-duration",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "wait",
+          "label": "x",
+          "ms": "200"
+        }
+      ]
+    }
+  },
+  {
+    "name": "rgb-outside-range",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            256,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        }
+      ]
+    }
+  },
+  {
+    "name": "wrong-rgb-count",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        }
+      ]
+    }
+  },
+  {
+    "name": "negative-tolerance",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": -1,
+          "minPixels": 4
+        }
+      ]
+    }
+  },
+  {
+    "name": "wide-tolerance",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 41,
+          "minPixels": 4
+        }
+      ]
+    }
+  },
+  {
+    "name": "zero-minimum",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 0
+        }
+      ]
+    }
+  },
+  {
+    "name": "fractional-minimum",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.1,
+            "top": 0.1,
+            "right": 0.9,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4.1
+        }
+      ]
+    }
+  },
+  {
+    "name": "reversed-region",
+    "valid": false,
+    "plan": {
+      "version": 1,
+      "title": "Observe test window",
+      "purpose": "Synthetic contract fixture, not a live game script",
+      "maxRuntimeMs": 5000,
+      "steps": [
+        {
+          "op": "tapColor",
+          "label": "Synthetic red target",
+          "region": {
+            "left": 0.8,
+            "top": 0.2,
+            "right": 0.3,
+            "bottom": 0.9
+          },
+          "rgb": [
+            255,
+            0,
+            0
+          ],
+          "tolerance": 8,
+          "minPixels": 4
+        }
+      ]
+    }
+  }
+]
