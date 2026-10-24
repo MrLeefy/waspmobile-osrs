@@ -22,7 +22,9 @@ class BridgeRetryPolicyTest {
         assertEquals(30000L, BridgeRetryPolicy.delayMs(100, Long.MAX_VALUE))
     }
     @Test fun permanentPhoneMisconfigurationMustNotLoopForever() {
-        for (code in listOf(400, 403, 404, 422)) assertTrue("HTTP $code", BridgeRetryPolicy.isPermanentHttp(code))
-        for (code in listOf(401, 408, 409, 425, 429, 500, 502, 503, 504)) assertFalse("HTTP $code", BridgeRetryPolicy.isPermanentHttp(code))
+        for (code in listOf(300, 301, 302, 307, 308, 400, 401, 402, 403, 404, 405, 410, 415, 422, 426))
+            assertTrue("HTTP $code", BridgeRetryPolicy.isPermanentHttp(code))
+        for (code in listOf(200, 201, 408, 409, 423, 425, 429, 500, 502, 503, 504))
+            assertFalse("HTTP $code", BridgeRetryPolicy.isPermanentHttp(code))
     }
 }
