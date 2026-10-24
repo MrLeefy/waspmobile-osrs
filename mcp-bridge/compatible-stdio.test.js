@@ -27,12 +27,18 @@ test('mixed MCP2 discovery then old ChatGPT tool call succeeds on SAME stdio con
     return server;
   },{input,output});
   t.after(()=>adapter.close());
-  await adapter.dispatch({jsonrpc:'2.0',id:1,method:'server/discover',params:{}});
+  const modernMeta = {
+    'io.modelcontextprotocol/protocolVersion':MODERN,
+    'io.modelcontextprotocol/clientInfo':{name:'osrs-test',version:'1'},
+    'io.modelcontextprotocol/clientCapabilities':{}
+  };
+  await adapter.dispatch({jsonrpc:'2.0',id:1,method:'server/discover',params:{_meta:modernMeta}});
   await adapter.dispatch({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'wasp_devices',arguments:{},_meta:{'io.modelcontextprotocol/protocolVersion':LEGACY}}});
-  await adapter.dispatch({jsonrpc:'2.0',id:3,method:'events/list',params:{}});
-  await adapter.dispatch({jsonrpc:'2.0',id:4,method:'tools/call',params:{name:'execute',arguments:{},_meta:{'io.modelcontextprotocol/protocolVersion':MODERN}}});
+  await adapter.dispatch({jsonrpc:'2.0',id:3,method:'events/list',params:{_meta:modernMeta}});
+  await adapter.dispatch({jsonrpc:'2.0',id:4,method:'tools/call',params:{name:'execute',arguments:{},_meta:modernMeta}});
   await adapter.dispatch({jsonrpc:'2.0',id:5,method:'tools/call',params:{name:'execute',arguments:{},_meta:{'io.modelcontextprotocol/protocolVersion':LEGACY}}});
   const responses = raw.trim().split('\n').map(JSON.parse);
+  assert.deepEqual(responses.find(x=>x.id===1)?.result?.supportedVersions,[MODERN,LEGACY]);
   assert.equal(responses.find(x=>x.id===2)?.result?.content[0].text,'ok',JSON.stringify(responses));
   assert.deepEqual(responses.find(x=>x.id===3)?.result?.events,[]);
   assert.match(responses.find(x=>x.id===4)?.error?.message,/Privileged/);
