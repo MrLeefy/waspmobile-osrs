@@ -93,7 +93,7 @@ internal class AgentPanel(
     private fun weighted(view: View) = LinearLayout.LayoutParams(0, -2, 1f).apply {
         marginEnd = dp(4)
     }.also { view.layoutParams = it }
-    private fun field(hintText: String, secret: Boolean = false) = EditText(context).apply {
+    private fun field(hintText: String, secret: Boolean = false) = OverlayEditor(context).apply {
         hint = hintText; textSize = 14f; setTextColor(ink); setHintTextColor(muted)
         setSingleLine(true); minimumHeight = dp(48); setPadding(dp(10), dp(8), dp(10), dp(8))
         background = surface(Color.rgb(11, 18, 32))

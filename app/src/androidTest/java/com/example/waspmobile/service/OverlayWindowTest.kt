@@ -37,6 +37,8 @@ class OverlayWindowTest {
         val deadline = SystemClock.elapsedRealtime() + 10000L
         while (WaspAccessibilityService.instance == null && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(100)
         assertNotNull("The emulator must actually bind the Accessibility service", WaspAccessibilityService.instance)
+        shell("settings put system accelerometer_rotation 0")
+        shell("settings put system user_rotation 1")
         activity = ActivityScenario.launch(MainActivity::class.java)
         instrument.waitForIdleSync()
     }
@@ -75,8 +77,18 @@ class OverlayWindowTest {
         instrument.runOnMainSync { panel = makePanel(desk) { controlTaken++ }; panel!!.show() }
         assertTrue(panel!!.isShowing)
         capture("overlay-chat")
+        val automationInfo = automation.serviceInfo
+        automationInfo.flags = automationInfo.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        automation.serviceInfo = automationInfo
+        shell("settings put secure show_ime_with_hard_keyboard 1")
         instrument.runOnMainSync { panel!!.edit() }
-        SystemClock.sleep(700)
+        val imeDeadline = SystemClock.elapsedRealtime() + 5000L
+        fun keyboardVisible() = automation.windows.any {
+            it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+        }
+        while (!keyboardVisible() && SystemClock.elapsedRealtime() < imeDeadline) SystemClock.sleep(100)
+        capture("overlay-keyboard-assertion")
+        assertTrue("The software keyboard must actually be visible, not just a focused field", keyboardVisible())
         assertTrue(panel!!.isEditing)
         assertTrue(controlTaken > 0)
         capture("overlay-keyboard")
