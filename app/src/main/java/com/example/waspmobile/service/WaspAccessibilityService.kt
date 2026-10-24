@@ -1037,11 +1037,12 @@ class WaspAccessibilityService : AccessibilityService() {
         takeManualControl()
         val state = agentDesk.state.value
         val request = typed.trim().ifBlank { state.messages.lastOrNull { it.role == "user" }?.text.orEmpty() }
-        val content = "For Squishy: use the connected WaspMobile MCP tools. Device: ${state.deviceId}. " +
+        val content = "For this OSRS/WaspMobile conversation only: use the connected WaspMobile MCP tools. Device: ${state.deviceId}. " +
             "Read wasp_inbox, reply with wasp_reply, and propose any mobile script with wasp_offer_plan for my on-phone approval. " +
+            "Keep this request in this OSRS conversation; do not route it to another project or agent. " +
             "Do not assume the bridge is installed or connected until the tool call succeeds. My request: $request"
         val send = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, content) }
-        runCatching { startActivity(Intent.createChooser(send, "Choose ChatGPT, then your Squishy conversation")
+        runCatching { startActivity(Intent.createChooser(send, "Choose ChatGPT, then this OSRS conversation")
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             .onFailure { WaspMobileState.log("Share sheet unavailable; open ChatGPT and read the MCP inbox.") }
     }

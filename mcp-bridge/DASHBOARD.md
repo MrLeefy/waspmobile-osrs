@@ -9,21 +9,21 @@ The existing WaspMobile pill has an **AI** button. It opens a right-side panel w
 - **Take control / type** pauses input, cancels the approved plan, and enables the keyboard. Editing never runs alongside remote taps.
 - **Watch / allow input** explicitly leaves editing mode and permits fresh, independently validated remote input. It does not resume a cancelled script.
 - **Send to MCP inbox** queues a request for the connected agent to read with `wasp_inbox`. Acknowledgements and message IDs prevent duplicate delivery after a network retry.
-- **Share to ChatGPT** opens Android's standard share chooser with the request and device identifier, never credentials. Choose ChatGPT and the intended Squishy conversation yourself. It is not an automatic dot-routing API.
+- **Share to ChatGPT** opens Android's standard share chooser with the request and device identifier, never credentials. Choose ChatGPT and this OSRS/WaspMobile conversation yourself. It is not an automatic dot-routing API.
 - **Approve this plan** authorizes only the exact displayed proposal and digest. Expired, replaced, invalid or already-consumed approvals cannot start it.
 - The pill shows **STOP AI** while a plan runs, **PAUSE REMOTE** when remote input is enabled, or **ALLOW REMOTE** after manual takeover. It cannot accidentally present the legacy START action as the stop control for an AI run.
 
 Watch mode is non-focusable. The expanded panel is a real touchable window: its rectangle and the original pill are explicitly excluded from game input. The keyboard, window focus and OEM overlay behavior still require S23 instrumentation.
 
-## Important: this is not an embedded Squishy conversation
+## Important: OSRS conversation only, not embedded ChatGPT
 
-The panel is a **bidirectional MCP mailbox and execution dashboard**. The agent still runs in ChatGPT, under the user's chosen conversation and subscription. The relay contains no OpenAI API key, API billing integration, browser-session scraping, or copied ChatGPT cookies.
+The panel is a **bidirectional MCP mailbox and execution dashboard**. The agent still runs in ChatGPT, in this OSRS/WaspMobile conversation under the user's subscription. Other game projects, conversations, agents and task queues are separate; this panel must not direct requests to them. The relay contains no OpenAI API key, API billing integration, browser-session scraping, or copied ChatGPT cookies.
 
-Sending a message to an MCP server does not, by itself, wake a dot or start an LLM turn. An active, authorized agent must call `wasp_inbox`, then `wasp_reply`. The panel labels this limitation instead of suggesting a response is already running. “MCP agent recently active” means an inbox read or reply was observed recently; it is not proof that Squishy is continuously watching.
+Sending a message to an MCP server does not, by itself, wake an agent or start an LLM turn. An active, authorized agent must call `wasp_inbox`, then `wasp_reply`. The panel labels this limitation instead of suggesting a response is already running. “MCP agent recently active” means an inbox read or reply was observed recently; it is not proof that the OSRS agent is continuously watching.
 
-For the first interaction, open ChatGPT or use the share button and ask the intended dot to read the paired WaspMobile inbox. Establish the custom MCP connection using the [bridge setup](README.md) first. If the tools are not installed/discovered in ChatGPT, the panel will wait; installing this APK alone cannot add tools to that conversation.
+For the first interaction, open ChatGPT or use the share button and ask the agent in this OSRS conversation to read the paired WaspMobile inbox. Establish the custom MCP connection using the [bridge setup](README.md) first. If the tools are not installed/discovered in ChatGPT, the panel will wait; installing this APK alone cannot add tools to that conversation.
 
-OpenAI's separate Sign in with ChatGPT mechanism can authorize eligible application requests, but it does not grant access to existing ChatGPT conversations or memory. It was **not** used here to impersonate or substitute a different assistant for Squishy. A seamless embedded-dot chat remains dependent on a verified supported integration, not an inferred capability of MCP.
+OpenAI's separate Sign in with ChatGPT mechanism can authorize eligible application requests, but it does not grant access to existing ChatGPT conversations or memory. It was **not** used here to impersonate an existing conversation or connect another project's agent. A seamless embedded-dot chat remains dependent on a verified supported integration, not an inferred capability of MCP.
 
 Official references checked during implementation:
 
@@ -98,7 +98,7 @@ Tests ran in an isolated Linux aarch64 workspace, with Node 20, Java 17, Gradle 
 2. Disable/re-enable the Accessibility service after updating its window capability; configure the private HTTPS bridge origin and token.
 3. Run `npm ci` and the stdio bridge on the PC, configure the supported MCP tunnel, and install that connection in ChatGPT. This step is separate from the Android relay pairing.
 4. Confirm `wasp_devices` and a fresh `wasp_observe` work from the actual ChatGPT conversation.
-5. Open AI in the HUD, submit a request, ask Squishy in ChatGPT to read the inbox, and confirm a reply appears.
+5. Open AI in the HUD, submit a request, ask the agent in this OSRS conversation in ChatGPT to read the inbox, and confirm a reply appears.
 6. Offer the observe-only example, review the exact proposal on the phone, and approve it. Test STOP AI and Take Control before permitting a tap.
 
 The build is not declared production-ready until the original S23 fixture suite, actual device behavior, real Windows Simba installation and actual ChatGPT tunnel have been verified. The legacy unauthenticated Swarm server remains separate and must not be exposed as an MCP endpoint. Remote split-screen/Secure Folder selection and Android API 30–33 remote capture remain unsupported.

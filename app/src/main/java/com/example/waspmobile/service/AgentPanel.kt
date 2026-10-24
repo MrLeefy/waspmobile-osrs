@@ -97,7 +97,7 @@ internal class AgentPanel(
             shareToChatGPT(composer?.text?.toString().orEmpty())
         }, LinearLayout.LayoutParams(0, -2, 1f))
         panel.addView(sendRow)
-        panel.addView(label("MCP mailbox, not embedded ChatGPT. Sending does not wake Squishy. Choose your dot in ChatGPT.", 10f))
+        panel.addView(label("OSRS/WaspMobile mailbox, not embedded ChatGPT. Open this OSRS conversation; sending does not start an agent turn.", 10f))
         val p = WindowManager.LayoutParams(
             minOf(dp(380), (bounds.width() * .48).toInt()).coerceAtLeast(minOf(dp(240), bounds.width())),
             (bounds.height() * .88).toInt(), WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,

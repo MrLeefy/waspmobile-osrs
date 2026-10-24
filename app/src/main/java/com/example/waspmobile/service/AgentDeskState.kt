@@ -23,7 +23,7 @@ internal class AgentDeskState(private val now: () -> Long) {
     @Synchronized fun begin(session: String, deviceId: String) {
         epoch = ""
         mutable.value = AgentDeskSnapshot(session = session, deviceId = deviceId,
-            notice = "Connected mailbox. Sending does not wake Squishy; open ChatGPT to start or continue the agent.")
+            notice = "OSRS/WaspMobile mailbox. Sending does not start an agent turn; open this OSRS conversation in ChatGPT.")
     }
     @Synchronized fun disconnect() {
         cancel("Remote session disconnected", includeOffer = true)

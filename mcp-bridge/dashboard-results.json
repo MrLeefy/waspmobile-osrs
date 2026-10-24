@@ -237,7 +237,7 @@
     "actual ChatGPT custom MCP tunnel and dot workflow"
   ],
   "notImplemented": [
-    "embedded Squishy conversation or automatic dot wake-up",
+    "embedded OSRS ChatGPT conversation or automatic agent wake-up",
     "full WaspLib Android port",
     "remote split-screen/Secure Folder selection",
     "legacy Swarm authentication/integration"
@@ -299,5 +299,10 @@
     "swarm-server/public/sw.js": "af36e56ed1e1aeebf167185953de2f65843f40803fe95f69ca805f924bcd351b",
     "swarm-server/server.js": "6cdb934b200a4931d458d2708064e0b32449ee85ffe2b1d1a1e7a4d28396ac1e",
     "swarm-server/verify_swarm.js": "7f9cc0bd37d59d47d41680ad6cba248412a0ec68044c4feebec59bcc12e50e06"
+  },
+  "subsequentScopeCorrection": {
+    "scope": "OSRS/WaspMobile conversation only; no other project or named agent is the intended destination",
+    "changes": "UI/share-prompt/documentation wording only; no gameplay execution changes",
+    "priorTestEvidence": "Test counts and source hashes above describe the previous implementation revision, before these wording corrections."
   }
 }
