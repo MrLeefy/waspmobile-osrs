@@ -31,9 +31,11 @@ test('mixed MCP2 discovery then old ChatGPT tool call succeeds on SAME stdio con
   await adapter.dispatch({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'wasp_devices',arguments:{},_meta:{'io.modelcontextprotocol/protocolVersion':LEGACY}}});
   await adapter.dispatch({jsonrpc:'2.0',id:3,method:'events/list',params:{}});
   await adapter.dispatch({jsonrpc:'2.0',id:4,method:'tools/call',params:{name:'execute',arguments:{},_meta:{'io.modelcontextprotocol/protocolVersion':MODERN}}});
+  await adapter.dispatch({jsonrpc:'2.0',id:5,method:'tools/call',params:{name:'execute',arguments:{},_meta:{'io.modelcontextprotocol/protocolVersion':LEGACY}}});
   const responses = raw.trim().split('\n').map(JSON.parse);
-  assert.equal(responses.find(x=>x.id===2).result?.content[0].text,'ok');
-  assert.deepEqual(responses.find(x=>x.id===3).result?.events,[]);
-  assert.match(responses.find(x=>x.id===4).error.message,/Privileged/);
+  assert.equal(responses.find(x=>x.id===2)?.result?.content[0].text,'ok',JSON.stringify(responses));
+  assert.deepEqual(responses.find(x=>x.id===3)?.result?.events,[]);
+  assert.match(responses.find(x=>x.id===4)?.error?.message,/Privileged/);
+  assert.match(responses.find(x=>x.id===5)?.error?.message,/Privileged/,'An explicit old protocol cannot authorize root actions after event discovery');
   assert.equal(calls,1,'No input should be repeated while handling protocol mismatch');
 });
