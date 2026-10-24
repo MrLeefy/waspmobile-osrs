@@ -14,7 +14,7 @@ async function fixture(t, options = {}) {
   t.after(() => relay.close());
   const base = `http://127.0.0.1:${relay.server.address().port}`;
   const state = {deviceId: 'phone01', sessionId: SESSION, remoteEnabled: true,
-    foreground: GAME_PACKAGE, windowKey: 'window-42-1024-512-rotation0', width: 1024, height: 512};
+    foreground: GAME_PACKAGE, windowKey: 'window-42-1024-512-rotation0', width: 1024, height: 512, inputAllowed: true};
   async function post(route, data, headers = {}) {
     const response = await fetch(base + route, {method: 'POST', headers: {
       authorization: 'Bearer ' + TOKEN, 'content-type': 'application/json', ...headers}, body: JSON.stringify(data)});
@@ -200,4 +200,25 @@ test('input hold permits a fresh read-only game frame but never a TAP', async t 
   const tap = await f.relay.request('phone01','TAP',{frameId:id,x:.5,y:.5});
   assert.equal(tap.ok,false);
   assert.equal((await f.poll({inputAllowed:false})).body.command,null);
+});
+
+/** An absent or malformed consent flag must never authorize OSRS input. */
+test('remote taps are fail-closed when local consent is omitted, null, strings or numbers', async t => {
+  const f = await fixture(t);
+  await f.poll();
+  const observed = await f.observe();
+  assert.equal(observed.completion.ok, true);
+  for (const untrusted of [undefined, null, 0, 1, 'true', 'false', false]) {
+    const delivery = await f.poll({inputAllowed: untrusted});
+    assert.equal(delivery.status, 200);
+    assert.equal(f.relay.list()[0].inputAllowed, false);
+    const rejected = await f.relay.request('phone01', 'TAP', {frameId: observed.id, x: .5, y: .5});
+    assert.equal(rejected.ok, false);
+    assert.match(rejected.error, /input allowed/i);
+  }
+  // Screenshot-only observation is still safe when local tap consent is off.
+  const screenshot = await f.observe();
+  assert.equal(screenshot.completion.ok, true);
+  await f.poll({inputAllowed:true});
+  assert.equal(f.relay.list()[0].inputAllowed, true);
 });
