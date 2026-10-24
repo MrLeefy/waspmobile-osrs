@@ -217,8 +217,34 @@ test('remote taps are fail-closed when local consent is omitted, null, strings o
     assert.match(rejected.error, /input allowed/i);
   }
   // Screenshot-only observation is still safe when local tap consent is off.
-  const screenshot = await f.observe();
-  assert.equal(screenshot.completion.ok, true);
+  const screenshot = f.relay.request('phone01', 'OBSERVE');
+  const delivery = await f.poll({inputAllowed:false});
+  assert.equal(delivery.body.command.type, 'OBSERVE');
+  await f.result(delivery.body.command.id, {windowKey:f.state.windowKey,
+    width:f.state.width,height:f.state.height,imageWidth:64,imageHeight:32,frame});
+  assert.equal((await screenshot).ok, true);
   await f.poll({inputAllowed:true});
   assert.equal(f.relay.list()[0].inputAllowed, true);
+});
+
+/** A single local Pause/Allow transition is a new gesture-consent boundary. */
+test('revoking then allowing input invalidates an old screenshot and cancels pending taps', async t => {
+  const f = await fixture(t); await f.poll();
+  const first = await f.observe();
+  const oldFrame = first.id;
+  const r1 = await f.poll({inputAllowed: false});
+  assert.equal(r1.status, 200);
+  assert.throws(() => f.relay.getFrame('phone01'));
+  const r2 = await f.poll({inputAllowed: true});
+  assert.equal(r2.status, 200);
+  assert.equal(f.relay.list()[0].inputAllowed, true);
+  const rejected = await f.relay.request('phone01', 'TAP', {frameId: oldFrame, x:.4, y:.4});
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.error, /Fresh matching frameId/);
+  const newFrame = await f.observe();
+  const pending = f.relay.request('phone01', 'TAP', {frameId: newFrame.id, x:.4, y:.4});
+  await f.poll({inputAllowed:false});
+  const ended = await pending;
+  assert.equal(ended.ok, false);
+  assert.match(ended.error, /changed/);
 });
