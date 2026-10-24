@@ -123,7 +123,7 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
     }
     Object.assign(device, {session: data.sessionId, seenAt: now(), enabled,
       foreground: foreground && width > 0 && height > 0 && !!windowKey,
-      windowKey, width, height, status: text(data.status), inputAllowed: data.inputAllowed !== false});
+      windowKey, width, height, status: text(data.status), inputAllowed: data.inputAllowed === true});
     return device;
   }
 
