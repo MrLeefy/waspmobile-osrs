@@ -66,8 +66,8 @@ function serveCompatibleStdio(makeServer, {input = process.stdin, output = proce
     const controller = new AbortController();
     if (id !== undefined) active.set(id,controller);
     try {
-      // MCP2's reserved version metadata is not part of the old protocol's body.
-      // After choosing an era, translate only that routing field; all action arguments stay intact.
+      // MCP2's reserved routing metadata is not part of the old protocol body.
+      // Translate only this routing field; all actual tool arguments stay intact.
       const wire = structuredClone(message);
       if (version === LEGACY) {
         if (wire.params?._meta) delete wire.params._meta['io.modelcontextprotocol/protocolVersion'];
@@ -75,12 +75,19 @@ function serveCompatibleStdio(makeServer, {input = process.stdin, output = proce
       }
       const request = new Request('http://127.0.0.1/mcp',{method:'POST',headers:{
         'Content-Type':'application/json','Accept':'application/json, text/event-stream',
-        'MCP-Protocol-Version':version
+        'MCP-Protocol-Version':version,
+        'Mcp-Method':message.method,
+        ...(message.method === 'tools/call' ? {'Mcp-Name':message.params.name} : {})
       },body:JSON.stringify(wire),signal:controller.signal});
       const response = await handlers[version].fetch(request);
       const payload = await response.text();
       const messages = responseMessages(payload,response.headers.get('content-type') || 'application/json');
-      for (const result of messages) await write(result);
+      for (const result of messages) {
+        // The wrapper accepts BOTH versions on the same connection; advertise
+        // that contract instead of inheriting the modern-only HTTP projection.
+        if (message.method === 'server/discover' && result.result) result.result.supportedVersions = [MODERN,LEGACY];
+        await write(result);
+      }
       if (!messages.length && id !== undefined) await errorResult(id,-32603,'Empty MCP response; action not retried');
     } catch (error) {
       if (id !== undefined && !controller.signal.aborted) await errorResult(id,-32603,'MCP request failed without retry');
