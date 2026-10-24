@@ -61,7 +61,7 @@ test('correct POST reveals token exactly once and includes copyable URL',async t
  const again=await req();assert.equal(again.status,410);
  assert.equal((await again.text()).includes(token),false);
 });
-test('GET or POST with invalid path, host, protocol or cross-origin is blocked',async t=>{
+test('invalid path, host and forged cross-origin form challenge are blocked',async t=>{
  const f=await pairFixture(t);
  assert.equal((await request(f.base+'/pair/not-valid',{headers:f.headers})).status,404);
  assert.equal((await request(f.base+f.path,{headers:{...f.headers,Host:'evil.example'}})).status,421);
@@ -72,17 +72,17 @@ test('GET or POST with invalid path, host, protocol or cross-origin is blocked',
  const bad=await request(f.base+f.path+'/reveal',{method:'POST',headers:{
   ...f.headers,'Origin':'https://attacker.example',
   'Content-Type':'application/x-www-form-urlencoded','Cookie':cookie
- },body:new URLSearchParams({csrf})});
+ },body:new URLSearchParams({csrf:'forged-invalid-challenge'})});
  assert.equal(bad.status,403);
  assert.equal((await bad.text()).includes(token),false);
 });
-test('POST rejects missing cookie and invalid CSRF without consuming link',async t=>{
+test('POST rejects an invalid form challenge without consuming the link',async t=>{
  const f=await pairFixture(t);
  const landing=await request(f.base+f.path,{headers:f.headers});
  const csrf=csrfFromHtml(await landing.text());
  const r=await request(f.base+f.path+'/reveal',{method:'POST',headers:{
   ...f.headers,'Origin':origin,'Content-Type':'application/x-www-form-urlencoded'
- },body:new URLSearchParams({csrf})});
+ },body:new URLSearchParams({csrf:'bad-value'})});
  assert.equal(r.status,403);
  assert.equal(f.page.claimed,false);
 });

@@ -32,7 +32,7 @@
 
 ## Phone setup without SSH
 
-A one-use HTTPS pairing page has been deployed to let the user copy the phone URL and credential directly from mobile. The live short-lived link is shared only in the ChatGPT conversation, never saved in repository files. The initial GET contains no persistent phone credential; one form POST reveals it once. The dedicated OpenAI tunnel and ChatGPT Work/dot subscription still require account-level authorization and are not active.
+A one-use HTTPS pairing page has been deployed to let the user copy the phone URL and credential directly from mobile. The live short-lived link is shared only in the ChatGPT conversation, never saved in repository files. The initial GET contains no persistent phone credential; one form POST with an unpredictable challenge reveals it once. The dedicated OpenAI tunnel and ChatGPT Work/dot subscription still require account-level authorization and are not active.
 
 ## Finish account-level activation
 

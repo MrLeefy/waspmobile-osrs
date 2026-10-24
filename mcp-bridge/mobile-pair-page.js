@@ -110,19 +110,18 @@ function createMobilePairPage({
     }
     if(req.method==='POST' && requestPath===buttonPath){
       if(++attempts>5)return reply(res,429,'<h1>Too many invalid attempts</h1>');
-      const originHeader=req.headers.origin;
-      if(originHeader!==origin || req.headers['content-type']?.split(';')[0]!=='application/x-www-form-urlencoded'
-        || req.headers['sec-fetch-site']==='cross-site')return reply(res,403,'<h1>Unauthorized request</h1>');
+      // Mobile in-app browsers can change Origin and cookie policies.
+      // Require the secret URL plus a random hidden form value instead.
+      if(req.headers['content-type']?.split(';')[0]?.trim().toLowerCase() !==
+        'application/x-www-form-urlencoded')
+        return reply(res,415,'<h1>Invalid form type</h1>');
       let raw='';
       for await(const chunk of req){
         raw+=chunk.toString('utf8');
         if(raw.length>512)return reply(res,413,'<h1>Invalid request size</h1>');
       }
       const params=new URLSearchParams(raw);
-      const cookie=String(req.headers.cookie||'').split(';')
-        .map(x=>x.trim()).find(x=>x.startsWith('osrs_pair_csrf='));
-      const cookieValue=cookie?.slice('osrs_pair_csrf='.length);
-      if(params.size!==1||!safeEqual(params.get('csrf'),csrf)||!safeEqual(cookieValue,csrf))
+      if(params.size!==1 || !safeEqual(params.get('csrf'),csrf))
         return reply(res,403,'<h1>Invalid or expired pairing request</h1>');
       if(claimed||now()>=expiresAt)return closed(req,res);
       claimed=true;

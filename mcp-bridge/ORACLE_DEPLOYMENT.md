@@ -24,7 +24,7 @@ The VM does not run Windows Simba or WaspLib, so desktop-specific WaspLib probes
 
 ## Mobile-only pairing
 
-A one-time mobile setup page is hosted at the existing HTTPS phone hostname under a randomized /pair/ URL. Opening the page does not disclose the token; clicking Reveal performs a same-origin, CSRF-protected POST and shows the phone server URL and credential once. It expires within an hour. The portal is isolated on loopback port 7789 under a separate service and can be renewed without changing the phone secret. Do not commit an active pairing URL or the token to GitHub.
+A one-time mobile setup page is hosted at the existing HTTPS phone hostname under a randomized /pair/ URL. Opening the page does not disclose the token; clicking Reveal performs a POST protected by an unpredictable form challenge tied to the one-time link (compatible with Samsung in-app browsers that modify Origin and cookies) and shows the phone server URL and credential once. It expires within an hour. The portal is isolated on loopback port 7789 under a separate service and can be renewed without changing the phone secret. Do not commit an active pairing URL or the token to GitHub.
 
 ## Service operation and verification
 
