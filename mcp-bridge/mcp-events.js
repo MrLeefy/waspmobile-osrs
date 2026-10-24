@@ -219,6 +219,14 @@ function createMcpEvents({
       throw new ProtocolError(-32602,'Invalid event subscription arguments');
     }
     parseSecret(delivery.secret);
+    // ChatGPT MCP Events can request a bounded subscription lifetime. The
+    // server never grants more than requested; null still receives a finite
+    // seven-day lease rather than unlimited unattended access.
+    if(params.ttlMs != null && (!Number.isSafeInteger(params.ttlMs) ||
+      params.ttlMs<60000 || params.ttlMs>Number.MAX_SAFE_INTEGER-now())) {
+      throw new ProtocolError(-32602,'Invalid subscription TTL (minimum one minute)');
+    }
+    const grantedMs=params.ttlMs == null ? EXPIRY_MS : Math.min(EXPIRY_MS,params.ttlMs);
     const device=relay.list().find(x=>x.id===args.device_id);
     if(!device||!device.online||!device.remoteEnabled)throw new ProtocolError(-32602,'Pair and enable the selected phone before subscribing');
     parseCallbackUrl(delivery.url,allowedHosts);
@@ -229,7 +237,7 @@ function createMcpEvents({
       throw new ProtocolError(-32602,'Another Work/dot subscriber is active: unsubscribe it first');
     const id='sub_'+crypto.createHmac('sha256',key).update('private-owner\0'+EVENT_NAME+'\0'+args.device_id+'\0'+delivery.url).digest('hex').slice(0,32);
     const s={id,name:EVENT_NAME,deviceId:args.device_id,url:delivery.url,secret:delivery.secret,
-      expires:now()+EXPIRY_MS};
+      expires:now()+grantedMs};
     try { await verify(s); }
     catch(e){throw new ProtocolError(-32015,'Callback verification failed',{reason:'challenge_failed'});}
     const previous=subscription;
@@ -295,7 +303,8 @@ function createMcpEvents({
         name:z.literal(EVENT_NAME),
         arguments:z.strictObject({device_id:z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)}),
         delivery:z.strictObject({mode:z.literal('webhook'),url:z.string().url(),secret:z.string()}),
-        cursor:z.string().nullable().optional()
+        cursor:z.string().nullable().optional(),
+        ttlMs:z.number().int().positive().nullable().optional()
       })
     },subscribe);
     mcp.server.setRequestHandler('events/unsubscribe',{

@@ -1,5 +1,8 @@
 # Live OSRS overlay messages through MCP Events
 
+**October 24 gateway upgrade:** The existing Oracle Admin tunnel now supports WaspMobile MCP 2.0 Events. Legacy Oracle Admin tools remain available; event-capable modern sessions expose OSRS tools and harmless diagnostics, not privileged admin shell or file access. See [ORACLE_ADMIN_MCP2_UPGRADE.md](ORACLE_ADMIN_MCP2_UPGRADE.md). The ChatGPT Work/dot subscription must still be created by an authorized agent.
+
+
 **Goal:** keep the official OSRS game in the foreground while sending an overlay message that **automatically triggers a subscribed ChatGPT Work chat or OSRS-specific dot**, then receive the agent's reply in the floating WaspMobile panel.
 
 This is **not** a second AI service, nor a modification to the OSRS APK. It uses the existing WaspMobile relay, the existing MCP tools, and OpenAI's MCP Events feature. It does not route messages to Squishy's 2009Scape project.

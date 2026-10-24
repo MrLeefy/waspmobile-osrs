@@ -229,3 +229,20 @@ test('event type without replay explicitly rejects non-null cursors',async t=>{
  const f=await fixture(t);await f.poll();
  await assert.rejects(f.subscribe({cursor:'cursor-that-could-skip-messages'}),/replay cursors/);
 });
+
+test('MCP Events honors bounded ttlMs and refreshes the same subscription ID',async t=>{
+ const f=await fixture(t);await f.poll();
+ const initial=await f.subscribe({ttlMs:90_000});
+ const initialExpiry=Date.parse(initial.refreshBefore);
+ assert.ok(initialExpiry-Date.now()<=91_000);
+ f.advance(1000);
+ const refreshed=await f.subscribe({ttlMs:120_000});
+ assert.equal(refreshed.id,initial.id);
+ assert.ok(Date.parse(refreshed.refreshBefore)>initialExpiry);
+});
+test('MCP Events refuses a too-short lease and caps excessive lease requests',async t=>{
+ const f=await fixture(t);await f.poll();
+ await assert.rejects(f.subscribe({ttlMs:5_000}),/Invalid subscription TTL/);
+ const offered=await f.subscribe({ttlMs:30*86400000});
+ assert.ok(Date.parse(offered.refreshBefore)-Date.now() <= 7*86400000+1000);
+});

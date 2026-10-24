@@ -1,5 +1,8 @@
 # Use existing Oracle Admin MCP for WaspMobile OSRS
 
+**October 24 gateway upgrade:** The existing Oracle Admin tunnel now supports WaspMobile MCP 2.0 Events. Legacy Oracle Admin tools remain available; event-capable modern sessions expose OSRS tools and harmless diagnostics, not privileged admin shell or file access. See [ORACLE_ADMIN_MCP2_UPGRADE.md](ORACLE_ADMIN_MCP2_UPGRADE.md). The ChatGPT Work/dot subscription must still be created by an authorized agent.
+
+
 This is an **on-demand MCP tool route**. It needs no extra OpenAI Secure MCP Tunnel, no API key and no new ChatGPT plugin.
 
 ChatGPT's installed Oracle Admin MCP tool -> Oracle shell command -> private WaspMobile MCP HTTP endpoint at `127.0.0.1:7790/mcp` -> one S23 game window.

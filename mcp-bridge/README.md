@@ -1,5 +1,8 @@
 # WaspMobile MCP bridge — audited development build
 
+**October 24 gateway upgrade:** The existing Oracle Admin tunnel now supports WaspMobile MCP 2.0 Events. Legacy Oracle Admin tools remain available; event-capable modern sessions expose OSRS tools and harmless diagnostics, not privileged admin shell or file access. See [ORACLE_ADMIN_MCP2_UPGRADE.md](ORACLE_ADMIN_MCP2_UPGRADE.md). The ChatGPT Work/dot subscription must still be created by an authorized agent.
+
+
 **Status: draft, not production-complete.** The new [Agent Desk and mobile executor](DASHBOARD.md) are implemented; see `dashboard-results.json` for current checks and [AUDIT.md](AUDIT.md) for the preceding audit. This is not a connected ChatGPT session merely because the code exists in GitHub.
 
 ## Reuse the existing Oracle Admin plugin

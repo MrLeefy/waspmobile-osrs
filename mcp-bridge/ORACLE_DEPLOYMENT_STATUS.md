@@ -1,5 +1,8 @@
 # Oracle VM deployment receipt — October 24, 2026
 
+**October 24 gateway upgrade:** The existing Oracle Admin tunnel now supports WaspMobile MCP 2.0 Events. Legacy Oracle Admin tools remain available; event-capable modern sessions expose OSRS tools and harmless diagnostics, not privileged admin shell or file access. See [ORACLE_ADMIN_MCP2_UPGRADE.md](ORACLE_ADMIN_MCP2_UPGRADE.md). The ChatGPT Work/dot subscription must still be created by an authorized agent.
+
+
 **OSRS/WaspMobile only.** Deployed source commit: `57b3a1649789653f610df305da4576ac9c8cc887` from the draft OSRS branch.
 
 | Component | Observed state |
