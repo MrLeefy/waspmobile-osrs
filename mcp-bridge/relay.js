@@ -118,7 +118,8 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
     const width = integer(data.width, 1, 8192) ? data.width : 0;
     const height = integer(data.height, 1, 8192) ? data.height : 0;
     if (device.session !== data.sessionId || device.windowKey !== windowKey ||
-        device.width !== width || device.height !== height || !enabled || !foreground) {
+        device.width !== width || device.height !== height ||
+        device.inputAllowed !== (data.inputAllowed === true) || !enabled || !foreground) {
       invalidate(device, 'Device session, foreground or window geometry changed');
     }
     Object.assign(device, {session: data.sessionId, seenAt: now(), enabled,
