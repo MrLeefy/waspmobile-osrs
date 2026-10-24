@@ -1,6 +1,8 @@
 package com.example.waspmobile.ui.main
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -9,56 +11,37 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.NavKey
 import com.example.waspmobile.data.DefaultDataRepository
 import com.example.waspmobile.engine.TargetColorPreset
 import com.example.waspmobile.engine.WaspMobileState
-import com.example.waspmobile.engine.WaspScriptMode
-import com.example.waspmobile.service.StoreInstallResultReceiver
+import com.example.waspmobile.engine.SingleCharacterPolicy
+import com.example.waspmobile.service.BridgeConfigPolicy
+import com.example.waspmobile.service.BridgeSettingsStore
+import com.example.waspmobile.service.ConnectionPresentation
 import com.example.waspmobile.service.PhoneMcpBridge
 import com.example.waspmobile.service.WaspAccessibilityService
-import com.example.waspmobile.theme.WaspMobileTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 internal tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
@@ -66,538 +49,205 @@ internal tailrec fun Context.findActivity(): Activity? = when (this) {
     else -> null
 }
 
+private val Night = Color(0xFF0B1220)
+private val CardColor = Color(0xFF111D2F)
+private val TextColor = Color(0xFFE2E8F0)
+private val Muted = Color(0xFFABBDD2)
+private val Cyan = Color(0xFF38BDF8)
+private val Amber = Color(0xFFFBBF24)
+
 @Composable
 fun MainScreen(
     onItemClick: (NavKey) -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: MainScreenViewModel = viewModel { MainScreenViewModel(DefaultDataRepository()) },
 ) {
-    val telemetry by WaspMobileState.state.collectAsState()
     val context = LocalContext.current
-    val scroll = rememberScrollState()
-    var mcpUrl by remember { mutableStateOf(PhoneMcpBridge.savedUrl(context)) }
-    var mcpTokenInput by remember { mutableStateOf("") }
-    val mcpStatus by PhoneMcpBridge.status.collectAsState()
-    val mcpEnabled = mcpStatus.enabled
+    val scope = rememberCoroutineScope()
+    val telemetry by WaspMobileState.state.collectAsState()
+    val connection by PhoneMcpBridge.status.collectAsState()
+    var tab by rememberSaveable { mutableStateOf("Home") }
+    var savedVersion by remember { mutableIntStateOf(0) }
+    val saved = remember(savedVersion) { PhoneMcpBridge.savedInfo(context) }
+    var origin by rememberSaveable { mutableStateOf(saved.origin.ifBlank { BridgeConfigPolicy.DEFAULT_ORIGIN }) }
+    // Unsaved secrets deliberately do not go into the Activity SavedState bundle.
+    var token by remember { mutableStateOf("") }
+    var reconnectChat by rememberSaveable { mutableStateOf(saved.reconnectChat) }
+    var saving by remember { mutableStateOf(false) }
+    var feedback by rememberSaveable { mutableStateOf("") }
+    var showDisableConfirm by remember { mutableStateOf(false) }
+    val ai = ConnectionPresentation.ai(connection.connected, connection.eventSubscribed, connection.eventDelivery)
+    LaunchedEffect(Unit) { WaspMobileState.loadPrefs(context) }
 
-    LaunchedEffect(Unit) {
-        WaspMobileState.loadPrefs(context)
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color(0xFF080C14))
-            .verticalScroll(scroll)
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // Header Card
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFF0F172A), RoundedCornerShape(14.dp))
-                .border(1.dp, Color(0xFF0284C7), RoundedCornerShape(14.dp))
-                .padding(14.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(12.dp)
-                        .background(
-                            if (telemetry.serviceConnected) Color(0xFF10B981) else Color(0xFFF59E0B),
-                            CircleShape
-                        )
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "🐝 WASPMOBILE AGENT PREVIEW",
-                    color = Color(0xFF38BDF8),
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.ExtraBold
-                )
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = if (telemetry.serviceConnected) {
-                    "STATUS: OVERLAY CONNECTED (${telemetry.statusText})"
-                } else {
-                    "STATUS: OVERLAY OFF — Tap Step 1 below to enable in Accessibility Settings"
-                },
-                color = if (telemetry.serviceConnected) Color(0xFF10B981) else Color(0xFFFBBF24),
-                fontSize = 12.sp,
-                fontFamily = FontFamily.Monospace
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            if (!telemetry.serviceConnected) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = {
-                            StoreInstallResultReceiver.triggerStoreSessionUnlock(context)
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED)),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("🔓 1-Tap Unlock 'Unavailable'", color = Color.White, fontSize = 11.sp)
-                    }
-
-                    Button(
-                        onClick = {
-                            val intent = Intent(
-                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                Uri.fromParts("package", context.packageName, null)
-                            ).apply {
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            Toast.makeText(
-                                context,
-                                "Tap ⋮ (top-right 3 dots) -> Allow restricted settings!",
-                                Toast.LENGTH_LONG
-                            ).show()
-                            context.startActivity(intent)
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706)),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("⚙️ App Info (⋮ Allow)", color = Color.White, fontSize = 11.sp)
-                    }
+    fun save(connectAfter: Boolean) {
+        if (saving || connection.enabled) return
+        val proposedUrl = origin; val proposedToken = token; val remember = reconnectChat
+        saving = true; feedback = "Saving securely on this phone…"
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { BridgeSettingsStore.save(context, proposedUrl, proposedToken, remember) }
+            saving = false; feedback = result.message
+            if (result.saved) {
+                token = ""; origin = PhoneMcpBridge.savedUrl(context); savedVersion++
+                if (connectAfter && !WaspAccessibilityService.setMcpRemoteEnabled(true)) {
+                    feedback = "Connection saved. Enable the WaspMobile Accessibility service, then tap Connect."
                 }
-                Spacer(modifier = Modifier.height(6.dp))
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = {
-                        Toast.makeText(
-                            context,
-                            "Scroll to bottom -> tap 'Installed apps' -> WaspMobile OSRS Overlay",
-                            Toast.LENGTH_LONG
-                        ).show()
-                        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        context.startActivity(intent)
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("1. Enable Overlay", color = Color.White, fontSize = 12.sp)
-                }
-
-                Button(
-                    onClick = {
-                        val pm = context.packageManager
-                        val osrsIntent = pm.getLaunchIntentForPackage("com.jagex.oldscape.android")
-                        if (osrsIntent != null) {
-                            osrsIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            context.startActivity(osrsIntent)
-                        } else {
-                            Toast.makeText(
-                                context,
-                                "OSRS Mobile (com.jagex.oldscape.android) not found on this device yet.",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("2. Open OSRS App", color = Color.White, fontSize = 12.sp)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Button(
-                onClick = {
-                    WaspAccessibilityService.closeOverlayAndDisableService()
-                    val activity = context.findActivity()
-                    activity?.finishAndRemoveTask()
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = "✕ Close Overlay & Exit App",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp
-                )
-            }
-        }
-
-        // Opt-in AI control over an authenticated HTTPS phone-to-PC bridge.
-        // Disabling the Accessibility service also cancels the remote poller.
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFF0F172A), RoundedCornerShape(14.dp))
-                .border(1.dp, Color(0xFF334155), RoundedCornerShape(14.dp))
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                text = "MCP PHONE BRIDGE · ONE DEVICE (S23 PILOT)",
-                color = Color(0xFF38BDF8),
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp
-            )
-            Text(
-                text = "Open AI in the floating HUD for messages and script approvals. Manual opt-in each service session. Screenshots may be sent to your private PC bridge. " +
-                    "Use an HTTPS Tailscale Serve URL and a private 32+ character token. " +
-                    "Android 14+ only. Single foreground OSRS window required; split-screen remote control is disabled.",
-                color = Color(0xFFCBD5E1),
-                fontSize = 11.sp
-            )
-            Text(mcpStatus.message, color = Color(0xFFCBD5E1), fontSize = 11.sp)
-            Text(
-                "One OSRS character and one phone only. Split 2x and Swarm are disabled for this pilot.",
-                color = Color(0xFFFBBF24), fontSize = 11.sp
-            )
-            val pairedId = PhoneMcpBridge.savedDeviceId(context)
-            if (pairedId.isNotEmpty()) Text(
-                "Phone ID for optional PC pinning: $pairedId",
-                color = Color(0xFF94A3B8), fontSize = 10.sp
-            )
-            OutlinedTextField(
-                value = mcpUrl,
-                enabled = !mcpEnabled,
-                onValueChange = { mcpUrl = it },
-                label = { Text("HTTPS bridge URL", color = Color(0xFF94A3B8)) },
-                singleLine = true,
-                textStyle = TextStyle(color = Color.White),
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = mcpTokenInput,
-                enabled = !mcpEnabled,
-                onValueChange = { mcpTokenInput = it },
-                label = { Text("Bridge token (blank keeps saved token)", color = Color(0xFF94A3B8)) },
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-                textStyle = TextStyle(color = Color.White),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Button(
-                onClick = {
-                    if (mcpEnabled) {
-                        WaspAccessibilityService.setMcpRemoteEnabled(false)
-                    } else {
-                        val valid = PhoneMcpBridge.save(context, mcpUrl, mcpTokenInput)
-                        val started = valid && WaspAccessibilityService.setMcpRemoteEnabled(true)
-                        mcpTokenInput = ""
-                        Toast.makeText(
-                            context,
-                            if (started) "MCP phone bridge enabled for this service session"
-                            else "Could not start: enable Accessibility, enter HTTPS URL + token",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (mcpEnabled) Color(0xFFDC2626) else Color(0xFF0369A1)
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    if (mcpEnabled) "Disconnect MCP Remote Control"
-                    else "Connect MCP Remote Control",
-                    color = Color.White
-                )
-            }
-        }
-
-        // Live Biometric & Markov Telemetry Bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFF131D33), RoundedCornerShape(12.dp))
-                .padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            TelemetryStat("MARKOV STATE", telemetry.attention.badge, Color(0xFF38BDF8))
-            TelemetryStat("INV LIMIT", "${telemetry.filledSlots} / ${telemetry.currentInventoryLimit}", Color(0xFF10B981))
-            TelemetryStat("ACTIONS", "${telemetry.actionsCount}", Color(0xFFA855F7))
-        }
-
-        // Script Selector Section
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFF0F172A), RoundedCornerShape(14.dp))
-                .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(14.dp))
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                text = "SELECT WASPMOBILE SCRIPT",
-                color = Color(0xFF94A3B8),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
-
-            com.example.waspmobile.engine.SingleCharacterPolicy.selectableModes.forEach { mode ->
-                val selected = telemetry.scriptMode == mode
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            if (selected) Color(0xFF162036) else Color(0xFF0B111E),
-                            RoundedCornerShape(10.dp)
-                        )
-                        .border(
-                            1.dp,
-                            if (selected) Color(0xFF38BDF8) else Color(0xFF1E293B),
-                            RoundedCornerShape(10.dp)
-                        )
-                        .clickable {
-                            val newPreset = when (mode) {
-                                WaspScriptMode.WOODCUTTER_DROP -> TargetColorPreset.TREE_CANOPY
-                                WaspScriptMode.POWER_MINER -> TargetColorPreset.IRON_ROCK
-                                else -> telemetry.colorPreset
-                            }
-                            WaspMobileState.update {
-                                it.copy(
-                                    scriptMode = mode,
-                                    colorPreset = newPreset,
-                                    targetColorRgb = if (newPreset != it.colorPreset) newPreset.rgb else it.targetColorRgb,
-                                    colorTolerance = if (newPreset != it.colorPreset) newPreset.tolerance else it.colorTolerance,
-                                    statusText = "Selected script: ${mode.title}"
-                                )
-                            }
-                            WaspMobileState.savePrefs(context)
-                            WaspMobileState.log("Selected script: ${mode.title}")
-                        }
-                        .padding(10.dp)
-                ) {
-                    Text(
-                        text = mode.title,
-                        color = if (selected) Color(0xFF38BDF8) else Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
-                    )
-                    Text(
-                        text = mode.description,
-                        color = Color(0xFF94A3B8),
-                        fontSize = 11.sp
-                    )
-                }
-            }
-        }
-
-        // Target Color Preset & Tolerance Section
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFF0F172A), RoundedCornerShape(14.dp))
-                .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(14.dp))
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(20.dp)
-                        .background(Color(telemetry.targetColorRgb or -0x1000000), CircleShape)
-                        .border(1.dp, Color.White, CircleShape)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = String.format(
-                        "3D TARGET COLOR (#%06X) | TOLERANCE: %d",
-                        0xFFFFFF and telemetry.targetColorRgb,
-                        telemetry.colorTolerance
-                    ),
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            Slider(
-                value = telemetry.colorTolerance.toFloat(),
-                onValueChange = { newTol ->
-                    WaspMobileState.update { it.copy(colorTolerance = newTol.toInt()) }
-                },
-                onValueChangeFinished = {
-                    WaspMobileState.savePrefs(context)
-                },
-                valueRange = 10f..48f
-            )
-
-            TargetColorPreset.entries.forEach { preset ->
-                val isSelected = telemetry.colorPreset == preset
-                val swatchColor = if (preset == TargetColorPreset.CUSTOM_LOCKED) {
-                    telemetry.targetColorRgb or -0x1000000
-                } else {
-                    preset.rgb or -0x1000000
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            if (isSelected) Color(0xFF162036) else Color(0xFF0B111E),
-                            RoundedCornerShape(8.dp)
-                        )
-                        .clickable {
-                            WaspMobileState.update {
-                                it.copy(
-                                    colorPreset = preset,
-                                    targetColorRgb = if (preset == TargetColorPreset.CUSTOM_LOCKED) it.targetColorRgb else preset.rgb,
-                                    colorTolerance = preset.tolerance
-                                )
-                            }
-                            WaspMobileState.savePrefs(context)
-                        }
-                        .padding(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(16.dp)
-                            .background(Color(swatchColor), CircleShape)
-                            .border(1.dp, Color.White, CircleShape)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = preset.label,
-                        color = if (isSelected) Color(0xFF38BDF8) else Color(0xFFE2E8F0),
-                        fontSize = 13.sp
-                    )
-                }
-            }
-        }
-
-        // Protected Inventory Slots Section
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFF0F172A), RoundedCornerShape(14.dp))
-                .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(14.dp))
-                .padding(14.dp)
-        ) {
-            Text(
-                text = "INVENTORY PROTECTION (TAP-TO-DROP)",
-                color = Color(0xFF94A3B8),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(
-                    checked = telemetry.protectSlot1,
-                    onCheckedChange = { checked ->
-                        WaspMobileState.update { it.copy(protectSlot1 = checked) }
-                        WaspMobileState.savePrefs(context)
-                    }
-                )
-                Text("Protect Slot 1 (Axe / Pickaxe / Knife / Net)", color = Color.White, fontSize = 13.sp)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(
-                    checked = telemetry.protectSlot2,
-                    onCheckedChange = { checked ->
-                        WaspMobileState.update { it.copy(protectSlot2 = checked) }
-                        WaspMobileState.savePrefs(context)
-                    }
-                )
-                Text("Protect Slot 2 (Tinderbox / Feathers / Chisel)", color = Color.White, fontSize = 13.sp)
-            }
-        }
-
-        // Screen & Inventory Calibration Section
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFF0F172A), RoundedCornerShape(14.dp))
-                .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(14.dp))
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                text = "SCREEN & INVENTORY CALIBRATION",
-                color = Color(0xFF94A3B8),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
-            Text(
-                text = "Default coordinates are pre-calibrated for Samsung Galaxy S23 OSRS Mobile landscape (1024x472). Tap below to restore defaults at any time.",
-                color = Color(0xFF64748B),
-                fontSize = 11.sp
-            )
-            Button(
-                onClick = {
-                    WaspMobileState.resetBoxesToDefaults()
-                    WaspMobileState.savePrefs(context)
-                    Toast.makeText(
-                        context,
-                        "Reset Search Box & Inventory Grid to S23 OSRS Mobile defaults!",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = "🔄 Reset Boxes to S23 Defaults",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp
-                )
-            }
-        }
-
-        // Live Log Feed
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFF0B111E), RoundedCornerShape(12.dp))
-                .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(12.dp))
-                .padding(12.dp)
-        ) {
-            Text(
-                text = "LIVE ENGINE LOGS",
-                color = Color(0xFF38BDF8),
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            telemetry.logs.takeLast(8).forEach { line ->
-                Text(
-                    text = line,
-                    color = Color(0xFF94A3B8),
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace
-                )
             }
         }
     }
+    fun openSettings(action: String) {
+        runCatching { context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            .onFailure { Toast.makeText(context, "Open this setting in Android Settings.", Toast.LENGTH_LONG).show() }
+    }
+    fun openGame() {
+        val intent = context.packageManager.getLaunchIntentForPackage("com.jagex.oldscape.android")
+        if (intent != null) context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        else Toast.makeText(context, "Install the official OSRS Mobile app first.", Toast.LENGTH_LONG).show()
+    }
+    Column(modifier.fillMaxSize().background(Night).imePadding()) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text("OSRS companion", color = TextColor, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Text("One phone. Your saved connection. Control stays with you.", color = Muted, fontSize = 13.sp)
+        }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("Home", "Connection", "Settings", "Diagnostics").forEach { name ->
+                FilterChip(selected = tab == name, onClick = { tab = name }, label = { Text(name) },
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    colors = FilterChipDefaults.filterChipColors(labelColor = TextColor, selectedLabelColor = Color.White,
+                        selectedContainerColor = Color(0xFF075985), containerColor = CardColor))
+            }
+        }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            when (tab) {
+                "Home" -> {
+                    Section("Connection health") {
+                        HealthLine("Overlay", if (telemetry.serviceConnected) "Ready" else "Service is off", telemetry.serviceConnected)
+                        HealthLine("Oracle", connection.message, connection.connected)
+                        HealthLine("ChatGPT", ai.title.removePrefix("AI: "), ai.ready)
+                        HealthLine("Game input", if (connection.inputAllowed) "Enabled for fresh requests" else "Paused / not authorized", false)
+                        Text(ai.detail, color = Muted, fontSize = 13.sp)
+                    }
+                    if (!telemetry.serviceConnected) Section("Enable the overlay") {
+                        Text("Android Accessibility supplies this overlay. The separate ‘Appear on top’ permission is not required for it.", color = TextColor)
+                        Action("Open Accessibility settings") { openSettings(Settings.ACTION_ACCESSIBILITY_SETTINGS) }
+                        Text("Choose Installed apps → WaspMobile OSRS Overlay. If Android blocks a sideloaded app, open App info → ⋮ → Allow restricted settings, then return here.", color = Muted, fontSize = 13.sp)
+                        OutlinedButton(onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.fromParts("package", context.packageName, null)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                            Text("Open WaspMobile app info", color = Cyan)
+                        }
+                    }
+                    Section("Open your OSRS chat") {
+                        Text(if (saved.hasToken) "Your pairing profile is saved. No need to paste the token again." else "Save the server and private pairing token once in Connection.", color = TextColor)
+                        if (saved.hasToken && !connection.enabled) Action("Connect saved profile", telemetry.serviceConnected) {
+                            if (!WaspAccessibilityService.setMcpRemoteEnabled(true)) feedback = "Could not connect. Check Accessibility and saved settings."
+                        }
+                        Action("Open floating chat", telemetry.serviceConnected) { WaspAccessibilityService.showAgentDesk() }
+                        Action("Open OSRS") { openGame() }
+                        OutlinedButton(onClick = { tab = "Connection" }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Connection settings", color = Cyan) }
+                    }
+                    Section("Pause, don’t lose the connection") {
+                        Text("Stop pauses game input but keeps chat available. Hiding the panel does not disable Accessibility. Only the separate Disable service action turns the overlay off.", color = Muted)
+                        Action("Pause all game input", telemetry.serviceConnected) { WaspAccessibilityService.pauseInput() }
+                    }
+                }
+                "Connection" -> {
+                    Section("Saved phone profile") {
+                        Text(if (saved.hasToken) "Token saved${if (saved.encrypted) " securely" else " — will be upgraded to encrypted storage when saved"}. Blank keeps it." else "No pairing token saved yet.", color = if (saved.hasToken) Cyan else Amber)
+                        if (connection.enabled) Text("Disconnect before editing. The saved profile will not be deleted.", color = Amber, fontSize = 13.sp)
+                        OutlinedTextField(value = origin, onValueChange = { origin = it }, enabled = !connection.enabled && !saving,
+                            label = { Text("HTTPS server origin") }, textStyle = TextStyle(color = TextColor), singleLine = true,
+                            modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = token, onValueChange = { token = it.take(128) }, enabled = !connection.enabled && !saving,
+                            label = { Text(if (saved.hasToken) "Replace token (blank keeps saved)" else "Private pairing token") },
+                            visualTransformation = PasswordVisualTransformation(), textStyle = TextStyle(color = TextColor), singleLine = true,
+                            modifier = Modifier.fillMaxWidth())
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Switch(checked = reconnectChat, onCheckedChange = { reconnectChat = it }, enabled = !connection.enabled && !saving)
+                            Spacer(Modifier.width(10.dp)); Text("Reconnect chat when the service restarts", color = TextColor, modifier = Modifier.weight(1f))
+                        }
+                        Text("This option never restores input permission, unfinished actions, old messages or script approvals.", color = Muted, fontSize = 12.sp)
+                        if (feedback.isNotBlank()) Text(feedback, color = Cyan, fontSize = 13.sp)
+                        Action(if (saving) "Saving…" else "Save connection", !saving && !connection.enabled) { save(false) }
+                        Action("Save and connect", !saving && !connection.enabled) { save(true) }
+                        if (connection.enabled) OutlinedButton(onClick = { WaspAccessibilityService.setMcpRemoteEnabled(false) },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Disconnect — keep saved settings", color = Amber) }
+                    }
+                    Section("Two connections, shown separately") {
+                        Text("Oracle connected means the phone can send and receive messages. AI subscribed means a ChatGPT event subscription exists. Neither one alone means an AI reply or game action has happened.", color = Muted)
+                        HealthLine("Oracle", connection.message, connection.connected)
+                        HealthLine("AI", ai.title, ai.ready)
+                        Text(ai.detail, color = TextColor)
+                    }
+                }
+                "Settings" -> {
+                    Section("Local script") {
+                        Text("Local scripts and remote AI input cannot own the phone at the same time. Selecting a script does not start it.", color = Muted, fontSize = 13.sp)
+                        SingleCharacterPolicy.selectableModes.forEach { mode ->
+                            OutlinedButton(onClick = {
+                                WaspMobileState.update { it.copy(scriptMode = mode) }; WaspMobileState.savePrefs(context)
+                            }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                                Text((if (telemetry.scriptMode == mode) "Selected: " else "") + mode.title,
+                                    color = if (telemetry.scriptMode == mode) Cyan else TextColor)
+                            }
+                        }
+                    }
+                    Section("Calibration and item protection") {
+                        Text("Calibration boxes, selected script, target color and slot protection are retained on this phone.", color = Muted)
+                        Text("Color tolerance: ${telemetry.colorTolerance}", color = TextColor)
+                        Slider(value = telemetry.colorTolerance.toFloat().coerceIn(0f, 48f),
+                            onValueChange = { value -> WaspMobileState.update { it.copy(colorTolerance = value.toInt()) } },
+                            onValueChangeFinished = { WaspMobileState.savePrefs(context) }, valueRange = 0f..48f)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = telemetry.protectSlot1, onCheckedChange = { value -> WaspMobileState.update { it.copy(protectSlot1 = value) }; WaspMobileState.savePrefs(context) })
+                            Text("Protect inventory slot 1", color = TextColor)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = telemetry.protectSlot2, onCheckedChange = { value -> WaspMobileState.update { it.copy(protectSlot2 = value) }; WaspMobileState.savePrefs(context) })
+                            Text("Protect inventory slot 2", color = TextColor)
+                        }
+                        Text("Use the floating toolbar’s Color and Grid controls while OSRS is open. Do not uninstall to reset a connection; uninstalling removes app data.", color = Amber, fontSize = 13.sp)
+                    }
+                    Section("Service controls") {
+                        Text("Disable only when you are finished. Android requires you to re-enable Accessibility afterward; your saved profile stays on this phone.", color = Muted)
+                        OutlinedButton(onClick = { showDisableConfirm = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Disable overlay service…", color = Amber) }
+                    }
+                }
+                "Diagnostics" -> Section("Connection diagnostics — no secrets") {
+                    val diagnostic = "OSRS overlay recovery\nService: ${telemetry.serviceConnected}\nProfile saved: ${saved.hasToken}\nPhone ID: ${saved.deviceId}\nServer: ${saved.origin}\nPhase: ${connection.phase}\nOracle connected: ${connection.connected}\nEvent subscriber: ${connection.eventSubscribed}\nEvent delivery: ${connection.eventDelivery}\nOSRS window verified: ${connection.windowReady}\nInput allowed: ${connection.inputAllowed}\nStatus: ${connection.message}"
+                    Text(diagnostic, color = TextColor, fontSize = 13.sp)
+                    Action("Copy diagnostics (no token)") {
+                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("OSRS diagnostics", diagnostic))
+                        Toast.makeText(context, "Diagnostics copied; pairing token excluded.", Toast.LENGTH_SHORT).show()
+                    }
+                    Text("If Oracle works but AI is not subscribed, reinstalling or re-pairing will not fix the missing ChatGPT subscription. If tools show a protocol-version error, the gateway needs repair, not your phone token.", color = Amber, fontSize = 13.sp)
+                }
+            }
+            Text("OSRS only • Single-phone recovery preview", color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+    if (showDisableConfirm) AlertDialog(onDismissRequest = { showDisableConfirm = false }, title = { Text("Disable the overlay service?") },
+        text = { Text("Chat and game controls will disconnect. Your saved profile and calibration stay intact, but Android will require Accessibility to be enabled again.") },
+        confirmButton = { TextButton(onClick = { showDisableConfirm = false; WaspAccessibilityService.closeOverlayAndDisableService() }) { Text("Disable service") } },
+        dismissButton = { TextButton(onClick = { showDisableConfirm = false }) { Text("Keep enabled") } })
 }
 
-@Composable
-private fun TelemetryStat(label: String, value: String, valueColor: Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = label, color = Color(0xFF64748B), fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-        Text(
-            text = value,
-            color = valueColor,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace
-        )
+@Composable private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().background(CardColor, RoundedCornerShape(16.dp))
+        .border(1.dp, Color(0xFF293D55), RoundedCornerShape(16.dp)).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(title, color = TextColor, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        content()
     }
 }
-
-@Preview(showBackground = true)
-@Composable
-fun MainScreenPreview() {
-    WaspMobileTheme { MainScreen() }
+@Composable private fun HealthLine(label: String, value: String, healthy: Boolean) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label.uppercase(), color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Text(value, color = if (healthy) Cyan else TextColor, fontSize = 15.sp)
+    }
+}
+@Composable private fun Action(label: String, enabled: Boolean = true, action: () -> Unit) {
+    Button(onClick = action, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF075985), contentColor = Color.White)) { Text(label) }
 }

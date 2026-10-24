@@ -7,18 +7,29 @@ import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.SystemClock
+import android.text.Editable
 import android.text.InputFilter
+import android.text.TextWatcher
+import android.text.InputType
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-/** Bounded native overlay. Watch mode is non-focusable; editing explicitly takes input ownership. */
+/** One accessible OSRS side panel: Chat / Connection / Plan. No app switch is needed to configure it. */
 internal class AgentPanel(
     private val context: Context,
     private val windowManager: WindowManager,
@@ -26,163 +37,337 @@ internal class AgentPanel(
     private val takeControl: () -> Unit,
     private val allowInput: () -> Unit,
     private val approve: (String, String) -> Unit,
-    private val shareToChatGPT: (String) -> Unit
+    @Suppress("unused") private val shareToChatGPT: (String) -> Unit
 ) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val prefs = context.getSharedPreferences("osrs_overlay_ui", Context.MODE_PRIVATE)
     private var root: LinearLayout? = null
     private var params: WindowManager.LayoutParams? = null
-    private var connection: TextView? = null
-    private var transcript: TextView? = null
-    private var planText: TextView? = null
+    private var statusText: TextView? = null
+    private var deliveryText: TextView? = null
+    private var transcript: LinearLayout? = null
+    private var transcriptScroll: ScrollView? = null
     private var composer: EditText? = null
+    private var sendButton: Button? = null
+    private var connectionButton: Button? = null
+    private var urlInput: EditText? = null
+    private var tokenInput: EditText? = null
+    private var saveFeedback: TextView? = null
+    private var savedTokenLabel: TextView? = null
+    private var rememberChoice: CheckBox? = null
+    private var planText: TextView? = null
     private var approveButton: Button? = null
     private var rejectButton: Button? = null
-    private var sendButton: Button? = null
-    private var shareButton: Button? = null
-    private var eventHelp: TextView? = null
-    private var state = AgentDeskSnapshot()
-    private var bridgeStatus = PhoneMcpBridge.Status()
+    private var tabsRow: LinearLayout? = null
+    private var controlsRow: LinearLayout? = null
+    private val pages = mutableMapOf<String, View>()
+    private val tabs = mutableMapOf<String, Button>()
+    private var lastMessages: List<AgentMessage>? = null
+    private var snapshot = AgentDeskSnapshot()
+    private var connection = PhoneMcpBridge.Status()
+    private var selectedTab = prefs.getString("tab", "Chat").orEmpty().takeIf { it in setOf("Chat", "Connection", "Plan") } ?: "Chat"
+    private var saving = false
+    private var renderingDraft = false
+    private var imeBottom = 0
     var isEditing = false
         private set
-    private fun dp(n: Int) = (n * context.resources.displayMetrics.density).toInt()
-    private fun label(text: String, size: Float = 12f) = TextView(context).apply {
-        this.text = text; textSize = size; setTextColor(Color.rgb(226, 232, 240)); setPadding(0, dp(3), 0, dp(3))
+    val isShowing get() = root != null
+    private val ink = Color.rgb(226, 232, 240)
+    private val muted = Color.rgb(166, 181, 201)
+    private val accent = Color.rgb(56, 189, 248)
+    private fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()
+    private fun surface(color: Int, border: Int = Color.rgb(51, 65, 85)) = GradientDrawable().apply {
+        setColor(color); cornerRadius = dp(12).toFloat(); setStroke(dp(1), border)
     }
-    private fun button(text: String, action: () -> Unit) = Button(context).apply {
-        this.text = text; textSize = 11f; isAllCaps = false; minHeight = dp(40); minimumHeight = dp(40)
+    private fun label(value: String, size: Float = 13f) = TextView(context).apply {
+        text = value; textSize = size; setTextColor(ink); setPadding(dp(2), dp(4), dp(2), dp(4))
+    }
+    private fun button(value: String, action: () -> Unit) = Button(context).apply {
+        text = value; textSize = 12f; isAllCaps = false; minHeight = dp(44); minimumHeight = dp(44)
+        minWidth = 0; minimumWidth = 0; setPadding(dp(8), dp(4), dp(8), dp(4)); setTextColor(ink)
+        background = surface(Color.rgb(30, 41, 59)); contentDescription = value
         setOnClickListener { action() }
+    }
+    private fun column() = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private fun row() = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+    private fun weighted(view: View) = LinearLayout.LayoutParams(0, -2, 1f).apply {
+        marginEnd = dp(4)
+    }.also { view.layoutParams = it }
+    private fun field(hintText: String, secret: Boolean = false) = EditText(context).apply {
+        hint = hintText; textSize = 14f; setTextColor(ink); setHintTextColor(muted)
+        setSingleLine(true); minimumHeight = dp(48); setPadding(dp(10), dp(8), dp(10), dp(8))
+        background = surface(Color.rgb(11, 18, 32))
+        inputType = InputType.TYPE_CLASS_TEXT or if (secret) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_VARIATION_URI
+        filters = arrayOf(InputFilter.LengthFilter(if (secret) 128 else 2048))
+        importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+        setOnTouchListener { view, event ->
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) enterEditing(view)
+            false
+        }
     }
     fun show() {
         if (root != null) return
-        val bounds = windowManager.maximumWindowMetrics.bounds
-        val panel = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(8), dp(10), dp(8))
-            background = GradientDrawable().apply {
-                setColor(Color.argb(248, 15, 23, 42)); cornerRadius = dp(12).toFloat(); setStroke(dp(1), Color.rgb(56, 189, 248))
+        val panel = column().apply {
+            setPadding(dp(10), dp(6), dp(10), dp(8))
+            background = surface(Color.argb(252, 15, 23, 42), Color.rgb(51, 88, 111))
+        }
+        val header = row()
+        val title = label("OSRS companion", 16f).apply { typeface = Typeface.DEFAULT_BOLD; setTextColor(accent) }
+        header.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(button("Stop") { takeControl(); leaveEditing(); render(snapshot, connection) })
+        header.addView(button("Hide") { close() })
+        panel.addView(header)
+        statusText = label("").apply { maxLines = 2 }; panel.addView(statusText)
+        tabsRow = row().also { row ->
+            for (name in listOf("Chat", "Connection", "Plan")) {
+                val b = button(name) { selectTab(name) }; tabs[name] = b
+                row.addView(b, weighted(b))
             }
         }
-        val header = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        header.addView(label("OSRS AGENT · ONE PHONE", 14f).apply { typeface = Typeface.DEFAULT_BOLD }, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(button("Close") { close() })
-        panel.addView(header)
-        connection = label(""); panel.addView(connection)
-        val controls = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        controls.addView(button("Take control / type") { edit() }, LinearLayout.LayoutParams(0, -2, 1f))
-        controls.addView(button("Watch / allow input") { watch() }, LinearLayout.LayoutParams(0, -2, 1f))
-        panel.addView(controls)
-        val content = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-        transcript = label(""); content.addView(transcript)
-        planText = label("").apply { typeface = Typeface.MONOSPACE }; content.addView(planText)
-        val approval = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        approveButton = button("Approve this plan") {
-            val p = state.proposal ?: return@button
-            approve(p.id, p.sha256)
+        panel.addView(tabsRow)
+        val body = column()
+        pages["Chat"] = buildChat()
+        pages["Connection"] = buildConnection()
+        pages["Plan"] = buildPlan()
+        for (page in pages.values) body.addView(page, LinearLayout.LayoutParams(-1, -1))
+        panel.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
+        controlsRow = row().also { controls ->
+            val pause = button("Pause input") { takeControl(); leaveEditing(); render(snapshot, connection) }
+            val allow = button("Allow input") { watch() }
+            controls.addView(pause, weighted(pause)); controls.addView(allow, weighted(allow))
         }
-        rejectButton = button("Reject") { state.proposal?.let { desk.finish(it.id, "REJECTED", "Rejected locally") } }
-        approval.addView(approveButton, LinearLayout.LayoutParams(0, -2, 1f))
-        approval.addView(rejectButton, LinearLayout.LayoutParams(0, -2, 1f))
-        content.addView(approval)
-        val scroll = ScrollView(context).apply { addView(content); isFillViewport = false }
-        panel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        composer = EditText(context).apply {
-            hint = "Take control to type a request"; setHintTextColor(Color.rgb(148, 163, 184)); setTextColor(Color.WHITE)
-            textSize = 12f; minLines = 1; maxLines = 3; filters = arrayOf(InputFilter.LengthFilter(1000)); isEnabled = false
-        }
-        panel.addView(composer)
-        val sendRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        sendButton = button("Queue in MCP inbox") {
-            val typed = composer?.text?.toString().orEmpty()
-            if (typed.isNotBlank()) takeControl()
-            if (desk.queue(typed)) composer?.setText("")
-            else connection?.text = "Connect first; request must be 1–1000 characters and inbox must have space."
-        }
-        shareButton = button("Open ChatGPT instead") {
-            takeControl()
-            shareToChatGPT(composer?.text?.toString().orEmpty())
-        }
-        sendRow.addView(sendButton, LinearLayout.LayoutParams(0, -2, 1f))
-        sendRow.addView(shareButton, LinearLayout.LayoutParams(0, -2, 1f))
-        panel.addView(sendRow)
-        eventHelp = label("MCP inbox only; no ChatGPT Work/dot event subscription. Messages are queued, not sent into a chat turn.", 10f)
-        panel.addView(eventHelp)
-        val p = WindowManager.LayoutParams(
-            minOf(dp(380), (bounds.width() * .48).toInt()).coerceAtLeast(minOf(dp(240), bounds.width())),
-            (bounds.height() * .88).toInt(), WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.RIGHT; y = (bounds.height() * .06).toInt(); x = dp(6)
+        panel.addView(controlsRow)
+        val area = usableBounds()
+        val width = minOf(dp(370), if (area.width() > area.height()) (area.width() * .48f).toInt() else area.width() - dp(12)).coerceAtLeast(minOf(dp(220), area.width()))
+        val height = minOf(dp(610), area.height() - dp(12)).coerceAtLeast(minOf(dp(160), area.height()))
+        val p = WindowManager.LayoutParams(width, height, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT).apply {
+            gravity = Gravity.TOP or Gravity.LEFT
+            x = area.left + OverlayPlacement.coordinate(prefs.getFloat("panel_x", 1f), area.width(), width)
+            y = area.top + OverlayPlacement.coordinate(prefs.getFloat("panel_y", .05f), area.height(), height)
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
         }
-        windowManager.addView(panel, p)
-        root = panel; params = p; isEditing = false
+        root = panel; params = p
+        var downX = 0f; var downY = 0f; var initialX = 0; var initialY = 0
+        title.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downX = event.rawX; downY = event.rawY; initialX = p.x; initialY = p.y; true }
+                MotionEvent.ACTION_MOVE -> {
+                    val bounds = usableBounds(); p.x = (initialX + event.rawX - downX).toInt().coerceIn(bounds.left, maxOf(bounds.left, bounds.right - p.width))
+                    p.y = (initialY + event.rawY - downY).toInt().coerceIn(bounds.top, maxOf(bounds.top, bounds.bottom - p.height))
+                    runCatching { windowManager.updateViewLayout(panel, p) }; true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { savePlacement(); view.performClick(); true }
+                else -> false
+            }
+        }
+        panel.setOnApplyWindowInsetsListener { _, insets ->
+            val bottom = if (insets.isVisible(WindowInsets.Type.ime())) insets.getInsets(WindowInsets.Type.ime()).bottom else 0
+            if (bottom != imeBottom) { imeBottom = bottom; panel.post { fitKeyboard() } }
+            insets
+        }
+        try { windowManager.addView(panel, p) }
+        catch (error: Exception) { root = null; params = null; throw error }
+        selectTab(selectedTab)
         render(desk.state.value, PhoneMcpBridge.status.value)
     }
-    fun edit() {
+    private fun buildChat(): View {
+        val page = column()
+        deliveryText = label("").apply { setTextColor(muted); maxLines = 3 }
+        page.addView(deliveryText)
+        transcript = column()
+        transcriptScroll = ScrollView(context).apply { addView(transcript); isFillViewport = false }
+        page.addView(transcriptScroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        val inputRow = row()
+        composer = field("Message your OSRS agent").apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            setSingleLine(false); maxLines = 3; filters = arrayOf(InputFilter.LengthFilter(1000))
+            setText(desk.state.value.draft)
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    if (!renderingDraft) desk.setDraft(s?.toString().orEmpty())
+                    updateSendButton()
+                }
+                override fun afterTextChanged(s: Editable?) {}
+            })
+        }
+        inputRow.addView(composer, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(4) })
+        sendButton = button("Send") {
+            val text = composer?.text?.toString().orEmpty()
+            if (!connection.connected) { deliveryText?.text = "Oracle is offline. Your draft is saved; reconnect in Connection."; return@button }
+            takeControl()
+            if (desk.queue(text)) { desk.setDraft(""); composer?.setText(""); leaveEditing() }
+            else deliveryText?.text = "Message was not queued. The session is offline, the text is empty, or eight requests are already waiting."
+        }
+        inputRow.addView(sendButton)
+        page.addView(inputRow)
+        return page
+    }
+    private fun buildConnection(): View {
+        val page = column()
+        val saved = PhoneMcpBridge.savedInfo(context)
+        page.addView(label("Saved connection", 16f).apply { typeface = Typeface.DEFAULT_BOLD })
+        page.addView(label("Save once. Reconnect from here without leaving OSRS. A server connection is not an AI subscription.").apply { setTextColor(muted) })
+        page.addView(label("HTTPS server"))
+        urlInput = field("https://server.example").apply { setText(saved.origin.ifBlank { BridgeConfigPolicy.DEFAULT_ORIGIN }) }
+        page.addView(urlInput)
+        savedTokenLabel = label(if (saved.hasToken) "Pairing token saved — leave blank to retain it." else "No token saved. Paste the private pairing token.")
+        page.addView(savedTokenLabel)
+        tokenInput = field("New token (leave blank to keep saved)", secret = true)
+        page.addView(tokenInput)
+        rememberChoice = CheckBox(context).apply {
+            text = "Reconnect chat after the service restarts"; textSize = 13f; setTextColor(ink); isChecked = saved.reconnectChat
+        }
+        page.addView(rememberChoice)
+        page.addView(label("Reconnection never restores game input permission, unfinished commands or plan approval.", 12f).apply { setTextColor(muted) })
+        saveFeedback = label(""); page.addView(saveFeedback)
+        page.addView(button("Save connection") { saveConnection(connectAfter = false) })
+        connectionButton = button("Connect saved profile") {
+            if (connection.enabled) WaspAccessibilityService.setMcpRemoteEnabled(false)
+            else saveConnection(connectAfter = true)
+        }
+        page.addView(connectionButton)
+        page.addView(label("Phone ID\n${saved.deviceId.ifBlank { "Created when settings are saved" }}", 11f).apply { setTextIsSelectable(true) })
+        return ScrollView(context).apply { addView(page) }
+    }
+    private fun saveConnection(connectAfter: Boolean) {
+        if (saving) return
+        if (connection.enabled) { saveFeedback?.text = "Disconnect before changing this profile."; return }
+        val origin = urlInput?.text?.toString().orEmpty()
+        val token = tokenInput?.text?.toString().orEmpty()
+        val remember = rememberChoice?.isChecked == true
+        saving = true; saveFeedback?.text = "Saving securely…"
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { BridgeSettingsStore.save(context, origin, token, remember) }
+            saving = false; saveFeedback?.text = result.message
+            if (result.saved) {
+                tokenInput?.setText(""); urlInput?.setText(PhoneMcpBridge.savedUrl(context))
+                savedTokenLabel?.text = "Pairing token saved securely — leave blank to retain it."
+                if (connectAfter) {
+                    if (!WaspAccessibilityService.setMcpRemoteEnabled(true)) saveFeedback?.text = "Settings saved. Enable the WaspMobile Accessibility service to connect."
+                    else { leaveEditing(); selectTab("Chat") }
+                }
+            }
+        }
+    }
+    private fun buildPlan(): View {
+        val page = column()
+        page.addView(label("Review before running", 16f).apply { typeface = Typeface.DEFAULT_BOLD })
+        page.addView(label("A proposed plan is not running. Read every step before approving it. Stop is always available.").apply { setTextColor(muted) })
+        planText = label("").apply { setTextIsSelectable(true) }; page.addView(planText)
+        approveButton = button("Approve displayed plan") { snapshot.proposal?.let { approve(it.id, it.sha256) } }
+        rejectButton = button("Reject plan") { snapshot.proposal?.let { desk.finish(it.id, "REJECTED", "Rejected on phone") } }
+        page.addView(approveButton); page.addView(rejectButton)
+        return ScrollView(context).apply { addView(page) }
+    }
+    private fun selectTab(name: String) {
+        leaveEditing(); selectedTab = name
+        prefs.edit().putString("tab", name).apply()
+        pages.forEach { (key, view) -> view.visibility = if (key == name) View.VISIBLE else View.GONE }
+        tabs.forEach { (key, button) -> button.background = surface(if (key == name) Color.rgb(7, 89, 133) else Color.rgb(30, 41, 59)) }
+    }
+    private fun usableBounds(): Rect {
+        val metrics = windowManager.maximumWindowMetrics
+        val insets = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+        return Rect(metrics.bounds).apply { left += insets.left; top += insets.top; right -= insets.right; bottom -= insets.bottom }
+    }
+    private fun fitKeyboard() {
+        val panel = root ?: return; val p = params ?: return
+        val area = usableBounds()
+        val visibleHeight = maxOf(dp(100), area.height() - imeBottom)
+        p.height = minOf(dp(610), visibleHeight - dp(6)).coerceAtLeast(dp(90))
+        p.y = p.y.coerceIn(area.top, maxOf(area.top, area.bottom - imeBottom - p.height))
+        val compact = imeBottom > 0
+        statusText?.visibility = if (compact) View.GONE else View.VISIBLE
+        tabsRow?.visibility = if (compact) View.GONE else View.VISIBLE
+        controlsRow?.visibility = if (compact) View.GONE else View.VISIBLE
+        deliveryText?.visibility = if (compact) View.GONE else View.VISIBLE
+        runCatching { windowManager.updateViewLayout(panel, p) }
+    }
+    private fun enterEditing(target: View?) {
         takeControl(); isEditing = true
         val r = root ?: return; val p = params ?: return
         p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
-        windowManager.updateViewLayout(r, p)
-        composer?.isEnabled = true
-        composer?.requestFocus()
-        composer?.post { (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-            .showSoftInput(composer, InputMethodManager.SHOW_IMPLICIT) }
+        runCatching { windowManager.updateViewLayout(r, p) }
+        target?.requestFocus()
+        target?.post { (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(target, InputMethodManager.SHOW_IMPLICIT) }
     }
-    fun watch() {
-        val r = root
-        if (r != null) {
+    fun edit() { enterEditing(composer) }
+    private fun leaveEditing() {
+        root?.let { r ->
             (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(r.windowToken, 0)
-            composer?.clearFocus(); composer?.isEnabled = false
-            params?.let { p -> p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE; windowManager.updateViewLayout(r, p) }
+            r.clearFocus()
+            params?.let { p -> p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE; runCatching { windowManager.updateViewLayout(r, p) } }
         }
-        isEditing = false; allowInput()
+        isEditing = false
     }
+    /** Deliberate user action only; sending, hiding or reconnecting never calls allowInput. */
+    fun watch() { leaveEditing(); allowInput() }
     fun contains(x: Int, y: Int): Boolean {
-        val r = root ?: return false
-        val location = IntArray(2); r.getLocationOnScreen(location)
+        val r = root ?: return false; val location = IntArray(2); r.getLocationOnScreen(location)
         return Rect(location[0], location[1], location[0] + r.width, location[1] + r.height).contains(x, y)
     }
-    fun render(snapshot: AgentDeskSnapshot, status: PhoneMcpBridge.Status) {
-        state = snapshot; bridgeStatus = status
-        connection?.text = status.message + (if (isEditing) " · INPUT PAUSED WHILE TYPING" else "") +
-            if (snapshot.eventSubscribed) " · MCP EVENTS SUBSCRIBED"
-            else if (snapshot.agentActive) " · MCP agent recently active" else " · MCP inbox only"
-        eventHelp?.text = if (snapshot.eventSubscribed) {
-            when (snapshot.eventDelivery) {
-                "sending" -> "MCP event is being delivered to the subscribed ChatGPT Work/dot."
-                "accepted_by_chatgpt_webhook" -> "ChatGPT webhook accepted the event; waiting for Work/dot processing and a reply. OSRS stays open."
-                "delivery_failed", "rejected_by_callback" -> "ChatGPT event delivery failed. The message is still in the MCP inbox; check the PC connection."
-                else -> "OSRS Work/dot is subscribed to MCP Events. Send a message here without switching apps."
-            }
-        } else if (snapshot.eventsAvailable) {
-            "MCP Events available, but not subscribed. Ask an OSRS Work chat or OSRS dot to monitor overlay.message.created. Until then, requests wait in the inbox."
-        } else {
-            "MCP events are disabled on the PC. Requests are queued only. They do not start a ChatGPT turn."
+    private fun savePlacement() {
+        val p = params ?: return; val area = usableBounds()
+        prefs.edit().putFloat("panel_x", OverlayPlacement.fraction(p.x - area.left, area.width(), p.width))
+            .putFloat("panel_y", OverlayPlacement.fraction(p.y - area.top, area.height(), p.height)).apply()
+    }
+    private fun updateSendButton() {
+        sendButton?.isEnabled = connection.connected && !composer?.text.isNullOrBlank() && snapshot.outbox.size < 8
+        sendButton?.text = if (snapshot.eventSubscribed) "Send" else "Queue"
+    }
+    fun render(state: AgentDeskSnapshot, status: PhoneMcpBridge.Status) {
+        snapshot = state; connection = status
+        val ai = ConnectionPresentation.ai(status.connected, state.eventSubscribed, state.eventDelivery)
+        statusText?.text = "${status.message}\n${ai.title} · ${if (status.inputAllowed) "Input enabled" else "Input paused"}"
+        deliveryText?.text = state.storageWarning.ifBlank { ai.detail }
+        if (composer?.hasFocus() != true && composer?.text?.toString() != state.draft) {
+            renderingDraft = true; composer?.setText(state.draft); renderingDraft = false
         }
-        sendButton?.text = if (snapshot.eventSubscribed) "Send to subscribed agent" else "Queue in MCP inbox"
-        shareButton?.visibility = if (snapshot.eventSubscribed) View.GONE else View.VISIBLE
-        transcript?.text = snapshot.messages.joinToString("\n\n") { message ->
-            val who = if (message.role == "user") "You" else if (message.role == "agent") "Connected MCP agent" else "System"
-            "$who${if (message.queued) " (queued)" else ""}: ${message.text}"
-        }.ifBlank { snapshot.notice }
-        val p = snapshot.proposal
-        planText?.text = if (p != null) {
-            val details = p.plan.steps.mapIndexed { i, step ->
-                val guard = step.guard
-                "${i + 1}. ${step.op}: ${step.label}" + (if (step.op == "wait") " (${step.ms} ms)" else "") +
-                    (if (guard != null) "\nROI ${guard.region}; RGB ${guard.rgb}, tolerance ${guard.tolerance}, minimum ${guard.minPixels}" else "")
-            }.joinToString("\n")
-            "PROPOSED: ${p.plan.title}\n${p.plan.purpose}\nLimit: ${p.plan.maxRuntimeMs / 1000}s / ${p.plan.maxTaps} taps\n" +
-                "SHA-256: ${p.sha256}\n$details\nColor matching does not identify valuable items or prove the game goal."
-        } else snapshot.progress?.let { "${it.title}\n${it.status}: ${it.step}/${it.steps}\n${it.detail}" }.orEmpty()
-        approveButton?.isEnabled = p != null && status.connected && SystemClock.elapsedRealtime() < p.expiresAt
-        rejectButton?.isEnabled = p != null
+        connectionButton?.text = if (status.enabled) "Disconnect (keep saved profile)" else "Connect saved profile"
+        urlInput?.isEnabled = !status.enabled; tokenInput?.isEnabled = !status.enabled; rememberChoice?.isEnabled = !status.enabled
+        updateSendButton()
+        if (state.messages != lastMessages) {
+            val scroll = transcriptScroll
+            val atBottom = scroll == null || !scroll.canScrollVertically(1)
+            transcript?.removeAllViews()
+            if (state.messages.isEmpty()) transcript?.addView(label("Your OSRS conversation appears here. Drafts and history are saved on this phone; no old actions are restarted.").apply { setTextColor(muted) })
+            state.messages.forEach { m ->
+                val who = if (m.role == "user") "You" else if (m.role == "agent") "OSRS agent" else "Status"
+                val delivery = when { m.interrupted -> " · not resent"; m.queued -> " · queued"; m.historical -> " · previous session"; else -> "" }
+                transcript?.addView(label("$who$delivery\n${m.text}", 14f).apply {
+                    setTextIsSelectable(true); setPadding(dp(10), dp(8), dp(10), dp(8))
+                    background = surface(if (m.role == "user") Color.rgb(13, 60, 80) else Color.rgb(30, 41, 59))
+                    layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(7) }
+                })
+            }
+            lastMessages = state.messages
+            if (atBottom) scroll?.post { scroll.fullScroll(View.FOCUS_DOWN) }
+        }
+        val offer = state.proposal
+        planText?.text = if (offer != null) {
+            "${offer.plan.title}\n${offer.plan.purpose}\n\nMaximum ${offer.plan.maxRuntimeMs / 1000}s / ${offer.plan.maxTaps} taps\n\n" +
+                offer.plan.steps.mapIndexed { i, step -> "${i + 1}. ${step.op}: ${step.label}" +
+                    (if (step.op == "wait") " (${step.ms} ms)" else "") +
+                    (step.guard?.let { "\nRegion ${it.region}; RGB ${it.rgb}; tolerance ${it.tolerance}; minimum ${it.minPixels} pixels" } ?: "") }.joinToString("\n\n") +
+                "\n\nSHA-256: ${offer.sha256}\nColor matching does not establish item identity or game success."
+        } else state.progress?.let { "${it.title}\n${it.status}: ${it.step}/${it.steps}\n${it.detail}" } ?: "No plan is waiting. The AI must propose a fresh plan before you can approve one."
+        approveButton?.isEnabled = offer != null && status.connected && SystemClock.elapsedRealtime() < offer.expiresAt
+        rejectButton?.isEnabled = offer != null
+        tabs["Plan"]?.text = if (offer != null) "Plan •" else "Plan"
     }
     fun close() {
         val r = root ?: return
-        if (isEditing) takeControl() // Closing the editor never silently resumes input.
-        (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(r.windowToken, 0)
+        if (isEditing) takeControl()
+        savePlacement(); leaveEditing()
         runCatching { windowManager.removeView(r) }
-        root = null; params = null; composer = null; connection = null; transcript = null; planText = null
-        approveButton = null; rejectButton = null; sendButton = null; shareButton = null; eventHelp = null; isEditing = false
+        root = null; params = null; composer = null; statusText = null; deliveryText = null
+        transcript = null; transcriptScroll = null; sendButton = null; connectionButton = null
+        urlInput = null; tokenInput = null; savedTokenLabel = null; rememberChoice = null; saveFeedback = null
+        planText = null; approveButton = null; rejectButton = null; tabsRow = null; controlsRow = null
+        pages.clear(); tabs.clear(); lastMessages = null; imeBottom = 0; isEditing = false
     }
 }

@@ -2,8 +2,10 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="waspmobile_mcp_bridge.xml" />
+        <exclude domain="sharedpref" path="osrs_overlay_ui.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="waspmobile_mcp_bridge.xml" />
+        <exclude domain="sharedpref" path="osrs_overlay_ui.xml" />
     </device-transfer>
 </data-extraction-rules>

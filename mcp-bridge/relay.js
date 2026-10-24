@@ -76,7 +76,8 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
     }
   }
   function fresh(device) { return device && now() - device.seenAt <= onlineMs; }
-  function ready(device) { return fresh(device) && device.enabled && device.windowKey && device.foreground && device.inputAllowed; }
+  function observable(device) { return fresh(device) && device.enabled && device.windowKey && device.foreground; }
+  function ready(device) { return observable(device) && device.inputAllowed; }
   function summary(device) {
     return {id: device.id, online: fresh(device), remoteEnabled: device.enabled && fresh(device),
       foreground: device.foreground && fresh(device), windowKey: device.windowKey,
@@ -175,7 +176,7 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
           finish(task, {ok: false, error: 'Command expired before delivery', mayHaveExecuted: false});
           return reply(res, 200, {command: null, desk: overlay});
         }
-        if (!device.enabled || (task.type !== 'PAUSE' && !ready(device))) {
+        if (!device.enabled || (task.type !== 'PAUSE' && !(task.type === 'OBSERVE' ? observable(device) : ready(device)))) {
           finish(task, {ok: false, error: 'Phone is not ready', mayHaveExecuted: false});
           return reply(res, 200, {command: null, desk: overlay});
         }
@@ -226,7 +227,7 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
     const device = devices.get(deviceId);
     if (!fresh(device)) return Promise.resolve({ok: false, error: 'Device offline'});
     if (!device.enabled) return Promise.resolve({ok: false, error: 'Remote control disabled on phone'});
-    if (type !== 'PAUSE' && !ready(device)) return Promise.resolve({ok: false, error: 'OSRS must be foreground and remote input allowed locally'});
+    if (type !== 'PAUSE' && !(type === 'OBSERVE' ? observable(device) : ready(device))) return Promise.resolve({ok: false, error: 'OSRS must be foreground and remote input allowed locally'});
     if (signal?.aborted) return Promise.resolve({ok: false, error: 'Request cancelled'});
     if (type === 'PAUSE') {
       desk.stop(device);
@@ -261,7 +262,7 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
   }
   function getFrame(deviceId) {
     const device = devices.get(deviceId);
-    if (!ready(device) || !device.frame || now() - device.frame.at > frameMs) throw new Error('Fresh frame unavailable; observe again');
+    if (!observable(device) || !device.frame || now() - device.frame.at > frameMs) throw new Error('Fresh frame unavailable; observe again');
     const frame = device.frame;
     return {content: [{type: 'text', text: JSON.stringify({deviceId, frameId: frame.id,
       windowKey: frame.windowKey, ageMs: Math.max(0, Math.round(now() - frame.at)),

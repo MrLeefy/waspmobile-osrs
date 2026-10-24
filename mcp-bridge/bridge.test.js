@@ -185,3 +185,19 @@ test('shutdown resolves pending jobs and releases listener', async t => {
   assert.match((await done).error, /closed/);
   assert.equal(f.relay.server.listening, false);
 });
+
+test('input hold permits a fresh read-only game frame but never a TAP', async t => {
+  const f = await fixture(t);
+  await f.poll({inputAllowed:false});
+  const observe = f.relay.request('phone01','OBSERVE');
+  const packet = await f.poll({inputAllowed:false});
+  assert.equal(packet.body.command.type,'OBSERVE');
+  const id = packet.body.command.id;
+  await f.result(id, {windowKey:f.state.windowKey,width:f.state.width,height:f.state.height,
+    imageWidth:64,imageHeight:32,frame});
+  assert.equal((await observe).ok,true);
+  assert.equal(f.relay.getFrame('phone01').content[1].type,'image');
+  const tap = await f.relay.request('phone01','TAP',{frameId:id,x:.5,y:.5});
+  assert.equal(tap.ok,false);
+  assert.equal((await f.poll({inputAllowed:false})).body.command,null);
+});

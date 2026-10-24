@@ -11,7 +11,7 @@
  */
 const fs = require('node:fs/promises');
 const {Server, ProtocolError} = require('@modelcontextprotocol/server');
-const {serveStdio} = require('@modelcontextprotocol/server/stdio');
+const {serveCompatibleStdio} = require('./compatible-stdio');
 const {Client, StreamableHTTPClientTransport} = require('@modelcontextprotocol/client');
 const {StdioClientTransport} = require('@modelcontextprotocol/client/stdio');
 const z = require('zod/v4');
@@ -193,7 +193,7 @@ async function createGateway({
 
 async function main(){
   const gateway=await createGateway({onError:message=>process.stderr.write('MCP gateway: '+message+'\n')});
-  const handler=serveStdio(async({era})=>gateway.makeServer({era}),{legacy:'serve',onerror:e=>{
+  const handler=serveCompatibleStdio(async({era})=>gateway.makeServer({era}),{onerror:e=>{
     process.stderr.write('MCP gateway transport warning: '+String(e.message).slice(0,180)+'\n');
   }});
   let stopping=false;
