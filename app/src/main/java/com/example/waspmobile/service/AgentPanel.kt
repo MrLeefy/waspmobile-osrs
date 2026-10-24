@@ -240,9 +240,14 @@ internal class AgentPanel(
         val token = tokenInput?.text?.toString().orEmpty()
         val remember = rememberChoice?.isChecked == true
         saving = true; saveFeedback?.text = "Saving securely…"
+        // A durable save may finish after Hide, rotation, or service shutdown.
+        // Never update a newly created panel or unexpectedly reconnect it.
+        val panelAtRequest = root
         scope.launch {
             val result = withContext(Dispatchers.IO) { BridgeSettingsStore.save(context, origin, token, remember) }
-            saving = false; saveFeedback?.text = result.message
+            saving = false
+            if (root !== panelAtRequest || root == null) return@launch
+            saveFeedback?.text = result.message
             if (result.saved) {
                 tokenInput?.setText(""); urlInput?.setText(PhoneMcpBridge.savedUrl(context))
                 savedTokenLabel?.text = "Pairing token saved securely — leave blank to retain it."
