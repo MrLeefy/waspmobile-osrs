@@ -86,11 +86,12 @@ function createMobilePairPage({
     if(req.headers.host!==parsed.host || req.headers['x-forwarded-proto']!=='https') {
       res.writeHead(421);return res.end();
     }
-    if(req.url!==startPath && req.url!==buttonPath){
+    const requestPath = typeof req.url === 'string' && req.url.length <= 512 ? req.url.split('?',1)[0] : '';
+    if(requestPath!==startPath && requestPath!==buttonPath){
       res.writeHead(404);return res.end();
     }
     if(claimed||now()>=expiresAt)return closed(req,res);
-    if(req.method==='GET' && req.url===startPath){
+    if(req.method==='GET' && requestPath===startPath){
       if(++pageViews>100)return reply(res,429,'<h1>Request limit reached</h1>');
       if(!csrf)csrf=crypto.randomBytes(24).toString('base64url');
       baseHeaders(res);
@@ -107,7 +108,7 @@ function createMobilePairPage({
       res.writeHead(200);
       return res.end(layout(page));
     }
-    if(req.method==='POST' && req.url===buttonPath){
+    if(req.method==='POST' && requestPath===buttonPath){
       if(++attempts>5)return reply(res,429,'<h1>Too many invalid attempts</h1>');
       const originHeader=req.headers.origin;
       if(originHeader!==origin || req.headers['content-type']?.split(';')[0]!=='application/x-www-form-urlencoded'
