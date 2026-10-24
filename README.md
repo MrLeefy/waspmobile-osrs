@@ -4,16 +4,31 @@ A human-biometric automation and computer-vision overlay ecosystem for **Old Sch
 
 ---
 
+## Single-device OSRS pilot (October 2026)
+
+The first mobile rollout is limited to **one Samsung S23, one active OSRS game window/character at a time, and one MCP controller**. This is an execution limit, **not an account-identity lock**. Remote multi-window/Secure Folder control, dual split UI, and the separate Swarm service are not part of this pilot.
+
+The actual one-phone constraints, pairing and tests are documented in [ONE_PHONE_PILOT.md](mcp-bridge/ONE_PHONE_PILOT.md). The APK is a development preview, not certified on a physical S23.
+
+## MCP development status (audited draft branch)
+
+**Project scope:** This repository and its Agent Desk belong to the OSRS/WaspMobile conversation only. Keep other game projects, conversations, agents and task queues separate.
+
+The opt-in MCP bridge is documented in [mcp-bridge/README.md](mcp-bridge/README.md).
+The floating [Agent Desk](mcp-bridge/DASHBOARD.md) adds MCP messages, replies, exact plan review, local approval and bounded color-guarded mobile execution. **MCP 2.0 Events** can now trigger a subscribed [OSRS ChatGPT Work chat or dot](mcp-bridge/MCP_EVENTS.md) when the user sends a message from the overlay, without switching out of OSRS. Ordinary chats cannot be automatically triggered by this feature. Current verification is in [dashboard-results.json](mcp-bridge/dashboard-results.json); the preceding audit is in [AUDIT.md](mcp-bridge/AUDIT.md).
+Remote phone control uses Android 14+ window-only screenshots, verified single-window identity, one-shot screenshot-bound taps, and approved JSON plans limited to 24 steps/12 taps/120 seconds. The panel is an MCP mailbox, not an embedded OSRS ChatGPT conversation or automatic agent wake-up. Remote split-screen and a complete Android port of WaspLib are not implemented. The legacy Swarm server is separate and unauthenticated;
+do not expose it as an MCP endpoint. No motion-randomization scheme guarantees anti-cheat immunity.
+
 ## 📂 Repository File Index
 
 ### 1. Android Standalone Accessibility Overlay (`app/src/main/`)
 Runs a pass-through `TYPE_ACCESSIBILITY_OVERLAY` floating HUD and computer-vision scanner directly over the official `com.jagex.oldscape.android` client (tested on Samsung Galaxy S23, One UI 6.1/7.0, Android 14/15, `1024x472` landscape aspect ratio).
 
 - **[`AndroidManifest.xml`](app/src/main/AndroidManifest.xml)** — Declares `WaspAccessibilityService`, `StoreInstallResultReceiver`, and `<queries>` package visibility for `com.jagex.oldscape.android`.
-- **[`res/xml/accessibility_service_config.xml`](app/src/main/res/xml/accessibility_service_config.xml)** — Configures `canPerformGestures="true"`, `canTakeScreenshot="true"`, and minimal IPC overhead (`canRetrieveWindowContent="false"`).
+- **[`res/xml/accessibility_service_config.xml`](app/src/main/res/xml/accessibility_service_config.xml)** — Configures `canPerformGestures="true"`, `canTakeScreenshot="true"`, and interactive-window retrieval (`canRetrieveWindowContent="true"`) for explicit foreground validation. It reads the root package rather than recursively traversing game nodes.
 - **[`engine/WaspMobileState.kt`](app/src/main/java/com/example/waspmobile/engine/WaspMobileState.kt)** — Thread-safe `StateFlow<WaspTelemetry>` state container, `SharedPreferences` persistence, S23-calibrated `searchBoxNorm` / `invBoxNorm` defaults, and `TargetColorPreset` definitions.
 - **[`engine/HumanTouchEngine.kt`](app/src/main/java/com/example/waspmobile/engine/HumanTouchEngine.kt)** — Biometric touch engine: 2D Gaussian thumb-pad sampling, `1.4..4.2px` capacitive thumb-roll micro-strokes, log-normal hold duration (`38..132ms`) with session fatigue drift, `gestureMutex` stroke serialization with `28..48ms` post-`ACTION_UP` flush window, 3-state Markov attention model (`FOCUSED`, `CASUAL`, `SECOND_MONITOR`), Anti-Slot-28 drop thresholds (`25..28`), and 4 human 28-slot drop patterns.
-- **[`engine/MobileVisionEngine.kt`](app/src/main/java/com/example/waspmobile/engine/MobileVisionEngine.kt)** — Zero-JNI bulk `getPixels` computer vision engine:
+- **[`engine/MobileVisionEngine.kt`](app/src/main/java/com/example/waspmobile/engine/MobileVisionEngine.kt)** — Bulk `getPixels` computer vision engine (fewer calls, not zero native overhead):
   - **Translucent-Safe 28-Slot Inventory Detector (`detectFilledInventorySlots`)**: Uses 1px/2px sharp opaque item sprite edge gradients (`|R1-R2| + |G1-G2| + |B1-B2| > 85`), intra-slot `meanAbsDev >= 28.0f`, and luminance range/floor (`minLum <= 75 || lumRange >= 165`) to reject 3D trees/roofs showing through empty semi-transparent OSRS Mobile inventory slots.
   - **OSRS Mobile Tab & Hotkey Detectors (`isInventoryTabOpen`, `isTapToDropActive`)**: Detects whether the right-sidebar Backpack tab (`x = 0.916..0.935, y = 0.505..0.520`) and left-sidebar Tap-to-Drop button (`x = 0.055..0.075, y = 0.550..0.585`) are active.
   - **3D Cluster Scanner (`findTargetClusters`)**: Excludes the floating HUD pill (`excludeRect`), overlay paint colors, and the central player sprite (`x in 0.465..0.535, y in 0.425..0.565`), caps connected-component BFS growth to `<= 5x5` cells, and sorts clusters by distance to the player center `(0.50, 0.50)`.
@@ -27,7 +42,7 @@ Runs a pass-through `TYPE_ACCESSIBILITY_OVERLAY` floating HUD and computer-visio
 - **[`service/StoreInstallResultReceiver.kt`](app/src/main/java/com/example/waspmobile/service/StoreInstallResultReceiver.kt)** — `PackageInstaller.SessionParams.setPackageSource(PACKAGE_SOURCE_STORE)` self-session installer helper.
 
 ### 2. Android Unit & Adversarial Test Suite (`app/src/test/`)
-- **[`vision/RealScreenshotVisionTest.kt`](app/src/test/java/com/example/waspmobile/vision/RealScreenshotVisionTest.kt)** — Ground-truth tests against real Samsung Galaxy S23 OSRS Mobile screenshots (`exact {0, 1}` 2-log detection over translucent background, `isInventoryTabOpen`, and tree cluster isolation).
+- **[`vision/RealScreenshotVisionTest.kt`](app/src/test/java/com/example/waspmobile/vision/RealScreenshotVisionTest.kt)** — Fixture-dependent ground-truth tests against real Samsung Galaxy S23 OSRS Mobile screenshots (`exact {0, 1}` 2-log detection over translucent background, `isInventoryTabOpen`, and tree cluster isolation).
 - **[`engine/MobileVisionEngineTest.kt`](app/src/test/java/com/example/waspmobile/engine/MobileVisionEngineTest.kt)**
 - **[`engine/BiometricStateHardeningTest.kt`](app/src/test/java/com/example/waspmobile/engine/BiometricStateHardeningTest.kt)**
 - **[`engine/CoordinateCutoutStressTest.kt`](app/src/test/java/com/example/waspmobile/engine/CoordinateCutoutStressTest.kt)**

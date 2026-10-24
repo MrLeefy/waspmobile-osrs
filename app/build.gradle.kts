@@ -11,8 +11,12 @@ android {
         applicationId = "com.example.waspmobile"
         minSdk = 30
         targetSdk = 36
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = 5
+        versionName = "2.1.2-mcp-events-preview"
+    }
+
+    testOptions {
+        unitTests.all { it.systemProperty("wasp.repoRoot", rootProject.projectDir.absolutePath) }
     }
 
     buildTypes {
@@ -69,6 +73,7 @@ dependencies {
 
   // Local tests: jUnit, coroutines, Android runner
   testImplementation(libs.junit)
+  testImplementation("org.json:json:20240303")
   testImplementation(libs.kotlinx.coroutines.test)
 
   // Instrumented tests: jUnit rules and runners

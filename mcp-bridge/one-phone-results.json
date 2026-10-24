@@ -1,0 +1,80 @@
+{
+  "scope": "One Samsung S23, one foreground OSRS game window/character at a time, one MCP controller, no Swarm changes",
+  "baseCommit": "56765c049d1fc0c884183350e811b9a9d500133d",
+  "recordedAtUtc": "2026-10-24T01:10:24.751978+00:00",
+  "node": {
+    "tests": 86,
+    "passed": 86,
+    "failed": 0,
+    "skipped": 0,
+    "exitCode": 0,
+    "newSinglePhoneTests": 8
+  },
+  "android": {
+    "assembleDebug": "passed",
+    "lintDebug": "passed",
+    "lintSeverityCounts": {
+      "Warning": 44
+    },
+    "unitTestTotals": {
+      "tests": 119,
+      "failures": 11,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 108
+    },
+    "newSingleCharacterTests": {
+      "tests": 5,
+      "passed": 5
+    },
+    "failingSuites": [
+      {
+        "name": "com.example.waspmobile.engine.AdversarialM4ClusterTest",
+        "tests": 8,
+        "failures": 2,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "com.example.waspmobile.engine.AdversarialM4Test",
+        "tests": 8,
+        "failures": 5,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "com.example.waspmobile.vision.RealScreenshotVisionTest",
+        "tests": 4,
+        "failures": 4,
+        "errors": 0,
+        "skipped": 0
+      }
+    ],
+    "testFailureCause": "Three absent user-owned Samsung S23 screenshot fixtures; no other source-level assertion failures",
+    "apk": {
+      "bytes": 30700649,
+      "sha256": "131656f9d86659afb4a38f37fe918dd3a66300d5f7945c034eb9fe68a18bc104",
+      "debugCertificateSha256": "843db6263d000b3b7eb5bff4cd6d338dd677969a081dbfaf445b68287893a9ce",
+      "debugSigned": true,
+      "versionCode": 4,
+      "versionName": "2.1.1-single-device-preview",
+      "applicationId": "com.example.waspmobile",
+      "installedOnS23": false
+    }
+  },
+  "bridge": {
+    "singleDeviceDefault": true,
+    "rejectSecondDeviceAfterOfflineCleanup": true,
+    "oneActiveConsentSession": true,
+    "optionalAllowedDeviceId": true
+  },
+  "outOfScope": [
+    "No Swarm source changes",
+    "No Windows Simba runtime test",
+    "No direct ChatGPT MCP connection",
+    "No physical Samsung S23 testing",
+    "No remote split-screen",
+    "No in-game account identity attestation"
+  ],
+  "readiness": "DEBUG_TEST_BUILD_ONLY, NOT PRODUCTION_READY"
+}

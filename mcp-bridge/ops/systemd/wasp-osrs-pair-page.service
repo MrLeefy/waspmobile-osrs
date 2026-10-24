@@ -1,0 +1,36 @@
+[Unit]
+Description=WaspMobile OSRS single-use mobile pairing portal (expires automatically)
+Documentation=https://github.com/MrLeefy/waspmobile-osrs
+After=network-online.target wasp-osrs-bridge.service
+Requires=wasp-osrs-bridge.service
+
+[Service]
+Type=simple
+User=wasposrs
+Group=wasposrs
+WorkingDirectory=/var/lib/wasp-osrs
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/wasp-osrs/bridge.env
+EnvironmentFile=/etc/wasp-osrs/pair-session.env
+ExecStart=/opt/wasp-osrs/bin/node /opt/wasp-osrs/helpers/mobile-pair-page.js
+Restart=no
+TimeoutStopSec=5s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectClock=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryMax=96M
+TasksMax=30
+LimitNOFILE=512

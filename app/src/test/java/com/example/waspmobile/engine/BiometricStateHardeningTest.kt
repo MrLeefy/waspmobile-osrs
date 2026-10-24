@@ -198,12 +198,12 @@ class BiometricStateHardeningTest {
     @Test
     fun testAtomicModeTransitions() {
         val initialMode = WaspMobileState.state.value.scriptMode
-        val allModes = WaspScriptMode.entries
+        val allModes = SingleCharacterPolicy.selectableModes
 
         for (i in 0 until allModes.size) {
-            val expectedNext = allModes[(WaspMobileState.state.value.scriptMode.ordinal + 1) % allModes.size]
+            val expectedNext = SingleCharacterPolicy.next(WaspMobileState.state.value.scriptMode)
             val cycled = WaspMobileState.cycleScriptMode()
-            assertEquals("cycleScriptMode must match sequential ordinal cycle", expectedNext, cycled)
+            assertEquals("Single-device mode must never select dual split screen", expectedNext, cycled)
             assertEquals("StateFlow must reflect updated mode immediately", expectedNext, WaspMobileState.state.value.scriptMode)
         }
 

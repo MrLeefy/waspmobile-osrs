@@ -1,0 +1,72 @@
+{
+  "scope": "One S23 OSRS overlay, same MCP server; opt-in ChatGPT Work/dot MCP 2.0 event subscriber; no second AI model or Swarm",
+  "verifiedAtUTC": "2026-10-24T01:54:54.709708+00:00",
+  "protocol": {
+    "modernMcp2026": "2026-07-28",
+    "legacyToolProtocolSupported": "2025-11-25",
+    "eventName": "overlay.message.created",
+    "supportedDestinations": "Eligible ChatGPT Work chats and dots, not ordinary Instant chats",
+    "webhookVerification": "signed single-use challenge tested locally",
+    "workDotWebhookLiveValidated": false
+  },
+  "node": {
+    "tests": 105,
+    "pass": 105,
+    "fail": 0,
+    "skipped": 0,
+    "exitCode": 0,
+    "eventUnitTests": 17,
+    "modernStdioProtocolTests": 2,
+    "signingAndEncryptionTests": "pass"
+  },
+  "android": {
+    "assembleDebug": "passed",
+    "lintDebug": "passed",
+    "lintSeverityCounts": {
+      "Warning": 44
+    },
+    "unitTests": {
+      "tests": 122,
+      "failures": 11,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 111
+    },
+    "eventStateSuite": {
+      "name": "com.example.waspmobile.service.AgentDeskStateTest",
+      "tests": 13,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "remainingFailureCause": "Three unavailable original user-owned S23 screenshot fixture files",
+    "apk": {
+      "versionCode": 5,
+      "versionName": "2.1.2-mcp-events-preview",
+      "bytes": 30717037,
+      "sha256": "023cdf72e4300a3bfc572e3b59fe82a5e9389b0a14ac10de00a0fc8112d73569",
+      "debugCertSha256": "843db6263d000b3b7eb5bff4cd6d338dd677969a081dbfaf445b68287893a9ce",
+      "signed": "Android debug",
+      "installedOnS23": false
+    }
+  },
+  "security": {
+    "eventOptIn": true,
+    "singleSubscriber": true,
+    "aes256GcmStorage": true,
+    "httpsCallbackValidation": true,
+    "dnsAndTlsValidation": true,
+    "webhookHmac": true,
+    "concurrentSubscriberSerialization": true,
+    "rejectUnreplayableCursor": true
+  },
+  "limitations": [
+    "Requires eligible Work/dot with active MCP Events subscription",
+    "Cannot inject into this existing ordinary ChatGPT chat",
+    "Requires user-side PC tunnel and callback configuration",
+    "Phone physical keyboard/focus still untested",
+    "Windows Simba hardware untested",
+    "OSRS automation may violate game rules"
+  ],
+  "productionReady": false
+}

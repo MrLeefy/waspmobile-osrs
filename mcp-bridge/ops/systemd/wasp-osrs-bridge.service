@@ -1,0 +1,44 @@
+[Unit]
+Description=WaspMobile OSRS private MCP bridge and authenticated phone relay
+Documentation=https://github.com/MrLeefy/waspmobile-osrs
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=wasposrs
+Group=wasposrs
+WorkingDirectory=/opt/wasp-osrs/current/mcp-bridge
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/wasp-osrs/bridge.env
+ExecStart=/opt/wasp-osrs/bin/node /opt/wasp-osrs/current/mcp-bridge/oracle-daemon.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+StateDirectory=wasp-osrs
+StateDirectoryMode=0750
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectClock=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+ReadWritePaths=/var/lib/wasp-osrs
+MemoryMax=768M
+TasksMax=128
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

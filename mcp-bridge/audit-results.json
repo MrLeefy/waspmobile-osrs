@@ -1,0 +1,188 @@
+{
+  "auditedStartingCommit": "93a99019d0dc6b6a2231a7b44c877bd554c3513e",
+  "node": {
+    "tests": 41,
+    "passed": 41,
+    "failed": 0,
+    "skipped": 0,
+    "exitCode": 0,
+    "officialMcpClientStdioIntegration": true,
+    "realWindowsSimba": false
+  },
+  "android": {
+    "assembleDebug": "passed",
+    "lintDebug": "passed",
+    "lintSeverityCounts": {
+      "Warning": 36
+    },
+    "unitTestTotals": {
+      "tests": 84,
+      "failures": 11,
+      "errors": 0,
+      "skipped": 0
+    },
+    "suites": [
+      {
+        "suite": "com.example.waspmobile.engine.AdversarialM1Test",
+        "tests": 13,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.engine.AdversarialM2Test",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.engine.AdversarialM4ClusterTest",
+        "tests": 8,
+        "failures": 2,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": [
+          {
+            "test": "testRectConstructorZeroingBugInJvmEnvironment",
+            "message": "java.lang.AssertionError: Screenshot 2 file must exist: src/test/resources/osrs-s23/media_1792780906471_c6388f0e.jpg"
+          },
+          {
+            "test": "testFindTargetClustersScreenshot2EmpiricalVerification",
+            "message": "java.lang.AssertionError: Screenshot 2 file must exist: src/test/resources/osrs-s23/media_1792780906471_c6388f0e.jpg"
+          }
+        ]
+      },
+      {
+        "suite": "com.example.waspmobile.engine.AdversarialM4Test",
+        "tests": 8,
+        "failures": 5,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": [
+          {
+            "test": "testDetectFilledInventorySlotsOnScreenshot2ExactTwoLogs",
+            "message": "java.lang.AssertionError: Screenshot file must exist: src/test/resources/osrs-s23/media_1792780906471_c6388f0e.jpg"
+          },
+          {
+            "test": "testFindTargetClustersPlayerCenterExclusionAnd5x5Cap",
+            "message": "java.lang.AssertionError: Screenshot file must exist: src/test/resources/osrs-s23/media_1792780906471_c6388f0e.jpg"
+          },
+          {
+            "test": "testIsInventoryTabOpenAcrossAllThreeScreenshots",
+            "message": "java.lang.AssertionError: Screenshot file must exist: src/test/resources/osrs-s23/media_1792780906388_c77464df.jpg"
+          },
+          {
+            "test": "testDetectFilledInventorySlotsEnvelopeToleranceFuzzing",
+            "message": "java.lang.AssertionError: Screenshot file must exist: src/test/resources/osrs-s23/media_1792780906471_c6388f0e.jpg"
+          },
+          {
+            "test": "testIsTapToDropActiveOnScreenshots",
+            "message": "java.lang.AssertionError: Screenshot file must exist: src/test/resources/osrs-s23/media_1792780906471_c6388f0e.jpg"
+          }
+        ]
+      },
+      {
+        "suite": "com.example.waspmobile.engine.BiometricStateHardeningTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.engine.CoordinateCutoutStressTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.engine.MobileVisionEngineTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.engine.VerifiedInventoryDropTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.service.PhoneMcpBridgeTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.service.RemoteSessionGateTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.ui.main.MainScreenViewModelTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": []
+      },
+      {
+        "suite": "com.example.waspmobile.vision.RealScreenshotVisionTest",
+        "tests": 4,
+        "failures": 4,
+        "errors": 0,
+        "skipped": 0,
+        "failureDetails": [
+          {
+            "test": "testIsInventoryTabOpen_AcrossScreenshots",
+            "message": "java.lang.AssertionError: Screenshot 1 file must exist: /tmp/waspmobile-audit-2UIj6j/repo/app/src/test/resources/osrs-s23/media_1792780906388_c77464df.jpg"
+          },
+          {
+            "test": "testIsTapToDropActive_Screenshot2",
+            "message": "java.lang.AssertionError: Screenshot 1 file must exist: /tmp/waspmobile-audit-2UIj6j/repo/app/src/test/resources/osrs-s23/media_1792780906388_c77464df.jpg"
+          },
+          {
+            "test": "testFindTargetClusters_TreeCanopy_Screenshot2",
+            "message": "java.lang.AssertionError: Screenshot 1 file must exist: /tmp/waspmobile-audit-2UIj6j/repo/app/src/test/resources/osrs-s23/media_1792780906388_c77464df.jpg"
+          },
+          {
+            "test": "testDetectFilledInventorySlots_Screenshot2_ExactTwoLogs",
+            "message": "java.lang.AssertionError: Screenshot 1 file must exist: /tmp/waspmobile-audit-2UIj6j/repo/app/src/test/resources/osrs-s23/media_1792780906388_c77464df.jpg"
+          }
+        ]
+      }
+    ],
+    "instrumentedDeviceTests": "not run"
+  },
+  "baseline": {
+    "node": {
+      "assertionsPassed": 7,
+      "cleanExit": false,
+      "timeoutExitCode": 124
+    },
+    "android": {
+      "tests": 73,
+      "failures": 11,
+      "failureCause": "missing original S23 screenshot fixtures"
+    }
+  },
+  "dependencyAudit": {
+    "command": "npm audit --omit=dev --audit-level=high",
+    "reportedVulnerabilities": 0
+  },
+  "liveGameControlAttempted": false
+}

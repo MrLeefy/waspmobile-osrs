@@ -1,0 +1,23 @@
+{
+  "name": "waspmobile-mcp-bridge",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Locally authorized WaspMobile MCP bridge and isolated phone relay",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node bridge.js",
+    "test": "node --test *.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.4.0",
+    "ipaddr.js": "2.5.0",
+    "jpeg-js": "0.4.4",
+    "standardwebhooks": "1.1.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0"
+  }
+}

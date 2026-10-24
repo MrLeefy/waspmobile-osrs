@@ -1,8 +1,20 @@
 package com.example.waspmobile.service
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.app.KeyguardManager
+import android.graphics.Path
+import android.os.Build
+import android.os.PowerManager
+import android.os.SystemClock
+import android.view.accessibility.AccessibilityWindowInfo
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -32,6 +44,7 @@ import android.widget.TextView
 import com.example.waspmobile.engine.CalibrationMode
 import com.example.waspmobile.engine.HumanTouchEngine
 import com.example.waspmobile.engine.MobileVisionEngine
+import com.example.waspmobile.engine.VerifiedInventoryDrop
 import com.example.waspmobile.engine.TargetColorPreset
 import com.example.waspmobile.engine.WaspMobileState
 import com.example.waspmobile.engine.WaspScriptMode
@@ -48,6 +61,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.ByteArrayOutputStream
+import android.util.Base64
+import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -68,6 +84,21 @@ class WaspAccessibilityService : AccessibilityService() {
         fun closeOverlayAndDisableService() {
             instance?.shutdownAndDisable()
         }
+
+        /** User-initiated only. Never automatically enables remote control on reboot. */
+        fun setMcpRemoteEnabled(enabled: Boolean): Boolean {
+            val svc = instance ?: return false
+            return if (enabled) {
+                svc.stopBotLoop()
+                svc.userInputHold = false
+                svc.phoneMcpBridge?.start() == true
+            } else {
+                svc.phoneMcpBridge?.stop()
+                true
+            }
+        }
+
+        fun isMcpRemoteEnabled(): Boolean = instance?.phoneMcpBridge?.enabled == true
     }
 
     private lateinit var windowManager: WindowManager
@@ -86,6 +117,21 @@ class WaspAccessibilityService : AccessibilityService() {
 
     private val touchEngine = HumanTouchEngine()
     private val visionEngine = MobileVisionEngine()
+    private var phoneMcpBridge: PhoneMcpBridge? = null
+    internal val remoteGate = RemoteSessionGate { SystemClock.elapsedRealtime() }
+    private var remoteGeometryRevision = 0L
+    internal val agentDesk = AgentDeskState { SystemClock.elapsedRealtime() }
+    private var agentPanel: AgentPanel? = null
+    private var mobilePlanJob: Job? = null
+    private var userInputHold = false
+    @Volatile private var lastRelayContactMs = 0L
+
+    @Volatile
+    internal var currentForegroundPackage: String = ""
+        private set
+
+    internal fun remoteScreenWidth(): Int = getPhysicalScreenBounds().width()
+    internal fun remoteScreenHeight(): Int = getPhysicalScreenBounds().height()
 
     @Volatile
     private var suppressCanvasDrawing = false
@@ -123,6 +169,22 @@ class WaspAccessibilityService : AccessibilityService() {
         setupFloatingControlPill()
         setupDisplayListener()
 
+        phoneMcpBridge = PhoneMcpBridge(this, serviceScope, ::executeRemoteMcpCommand)
+        agentPanel = AgentPanel(this, windowManager, agentDesk, ::takeManualControl, {
+            userInputHold = false
+            remoteGate.invalidateFrame()
+        }, ::approveMobilePlan, ::shareAgentRequest)
+        serviceScope.launch {
+            agentDesk.state.collect { snapshot ->
+                agentPanel?.render(snapshot, PhoneMcpBridge.status.value)
+                refreshPrimaryButton()
+                snapshot.progress?.let { subStatusTextView?.text = "${it.status}: ${it.step}/${it.steps} ${it.title}" }
+            }
+        }
+        serviceScope.launch {
+            PhoneMcpBridge.status.collect { status -> agentPanel?.render(agentDesk.state.value, status); refreshPrimaryButton() }
+        }
+
         serviceScope.launch {
             WaspMobileState.state.collect { state ->
                 updateOverlayFromState(state.isRunning, state.calibrationMode)
@@ -131,7 +193,11 @@ class WaspAccessibilityService : AccessibilityService() {
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
+        agentPanel?.close()
+        cancelMobilePlan("Display configuration changed")
         super.onConfigurationChanged(newConfig)
+        remoteGeometryRevision++
+        remoteGate.invalidateFrame()
         mainHandler.post {
             val pill = pillRootView
             val params = pillParams
@@ -144,14 +210,23 @@ class WaspAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Vision + gesture loop runs on coroutine timer; accessibility event IPC kept minimal
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event?.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            remoteGate.invalidateFrame()
+            currentForegroundPackage = event.packageName?.toString() ?: ""
+        }
     }
 
     override fun onInterrupt() {
+        phoneMcpBridge?.stop()
         stopBotLoop()
     }
 
     override fun onDestroy() {
+        agentPanel?.close()
+        agentPanel = null
+        phoneMcpBridge?.stop()
+        phoneMcpBridge = null
         stopBotLoop()
         instance = null
         displayListener?.let {
@@ -171,6 +246,10 @@ class WaspAccessibilityService : AccessibilityService() {
     }
 
     fun shutdownAndDisable() {
+        agentPanel?.close()
+        agentPanel = null
+        phoneMcpBridge?.stop()
+        phoneMcpBridge = null
         stopBotLoop()
         displayListener?.let {
             val dm = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
@@ -202,6 +281,8 @@ class WaspAccessibilityService : AccessibilityService() {
             override fun onDisplayRemoved(displayId: Int) {}
             override fun onDisplayChanged(displayId: Int) {
                 if (displayId == Display.DEFAULT_DISPLAY) {
+                    remoteGeometryRevision++
+                    remoteGate.invalidateFrame()
                     mainHandler.post {
                         val pill = pillRootView
                         val params = pillParams
@@ -333,6 +414,10 @@ class WaspAccessibilityService : AccessibilityService() {
 
         header.addView(swatch)
         header.addView(titleTv)
+        header.addView(makePillButton("AI", Color.rgb(3, 105, 161)) {
+            if (WaspMobileState.state.value.isRunning || manualActionJob?.isActive == true) takeManualControl()
+            runCatching { agentPanel?.show() }.onFailure { WaspMobileState.log("Agent panel could not open: ${it.javaClass.simpleName}") }
+        })
         header.addView(collapseBtn)
         header.addView(closeBtn)
         root.addView(header)
@@ -442,7 +527,9 @@ class WaspAccessibilityService : AccessibilityService() {
                 WaspMobileState.log("Switched mode to 📱 Split 2x")
             }
         )
-        for ((tag, clickAction) in modeItems) {
+        // One-device pilot: retain the legacy split mode in source for compatibility,
+        // but do not expose it as a selectable runtime action.
+        for ((tag, clickAction) in modeItems.filterNot { it.first == "📱 Split 2x" }) {
             val chip = makeChip(tag, false) { clickAction() }
             modeChips[tag] = chip
             modeLayout.addView(chip)
@@ -502,10 +589,11 @@ class WaspAccessibilityService : AccessibilityService() {
         }
 
         val runBtn = makePillButton("▶ START", Color.rgb(16, 185, 129)) {
-            if (WaspMobileState.state.value.isRunning || manualActionJob?.isActive == true) {
-                stopBotLoop()
-            } else {
-                startBotLoop()
+            when (primaryAction()) {
+                AgentPrimaryAction.STOP_PLAN, AgentPrimaryAction.PAUSE_REMOTE -> takeManualControl()
+                AgentPrimaryAction.ALLOW_REMOTE -> { userInputHold = false; remoteGate.invalidateFrame(); refreshPrimaryButton() }
+                AgentPrimaryAction.STOP_LOCAL -> stopBotLoop()
+                AgentPrimaryAction.START_LOCAL -> startBotLoop()
             }
         }
         startStopBtn = runBtn
@@ -544,9 +632,15 @@ class WaspAccessibilityService : AccessibilityService() {
         gridBtnRef = gridBtn
 
         val dropNowBtn = makePillButton("🎒 Drop", Color.rgb(217, 119, 6)) {
+            if (agentPanel?.isEditing == true) {
+                WaspMobileState.log("Leave the agent editor before using the local dropper.")
+                return@makePillButton
+            }
+            agentPanel?.close()
             if (botLoopJob?.isActive == true || manualActionJob?.isActive == true) {
                 stopBotLoop()
             }
+            phoneMcpBridge?.stop()
             manualActionJob = serviceScope.launch {
                 WaspMobileState.update { it.copy(isRunning = true, statusText = "SMART TAP-DROPPING...") }
                 try {
@@ -730,12 +824,7 @@ class WaspAccessibilityService : AccessibilityService() {
 
             (colorSwatchView?.background as? GradientDrawable)?.setColor(s.targetColorRgb)
 
-            startStopBtn?.apply {
-                text = if (isRunning) "⏸ PAUSE" else "▶ START"
-                (background as? GradientDrawable)?.setColor(
-                    if (isRunning) Color.rgb(239, 68, 68) else Color.rgb(16, 185, 129)
-                )
-            }
+            refreshPrimaryButton()
 
             val isCalibratingBox = calMode == CalibrationMode.ADJUST_SEARCH_BOX || calMode == CalibrationMode.ADJUST_INVENTORY_GRID
             gridBtnRef?.apply {
@@ -846,6 +935,21 @@ class WaspAccessibilityService : AccessibilityService() {
     }
 
     fun startBotLoop() {
+        if (WaspMobileState.state.value.scriptMode == WaspScriptMode.DUAL_SPLIT_SCREEN) {
+            WaspMobileState.update { it.copy(
+                scriptMode = WaspScriptMode.WOODCUTTER_DROP,
+                statusText = "SINGLE-DEVICE MODE: Split 2x unavailable"
+            ) }
+            WaspMobileState.savePrefs(this)
+            WaspMobileState.log("Split-screen blocked: one OSRS window/character only.")
+            return
+        }
+        if (agentPanel?.isEditing == true) {
+            WaspMobileState.log("Leave the agent editor before starting a local script.")
+            return
+        }
+        agentPanel?.close()
+        phoneMcpBridge?.stop()
         if (botLoopJob?.isActive == true) return
         manualActionJob?.cancel()
         manualActionJob = null
@@ -871,6 +975,8 @@ class WaspAccessibilityService : AccessibilityService() {
             while (isActive && WaspMobileState.state.value.isRunning) {
                 try {
                     runSingleBotIteration()
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     WaspMobileState.log("Loop warning: ${e.message}")
                 }
@@ -879,7 +985,9 @@ class WaspAccessibilityService : AccessibilityService() {
         }
     }
 
-    fun stopBotLoop() {
+    fun stopBotLoop(stopRemote: Boolean = true) {
+        cancelMobilePlan("Automation paused")
+        if (stopRemote) phoneMcpBridge?.stop()
         botLoopJob?.cancel()
         botLoopJob = null
         manualActionJob?.cancel()
@@ -896,6 +1004,306 @@ class WaspAccessibilityService : AccessibilityService() {
         mainHandler.post { canvasOverlayView?.invalidate() }
     }
 
+    private fun primaryAction() = AgentPrimaryAction.resolve(
+        planRunning = agentDesk.state.value.progress?.status == "RUNNING",
+        remoteEnabled = phoneMcpBridge?.enabled == true,
+        manualHold = userInputHold,
+        localRunning = WaspMobileState.state.value.isRunning || manualActionJob?.isActive == true
+    )
+    private fun refreshPrimaryButton() {
+        val action = primaryAction()
+        startStopBtn?.text = action.label
+        (startStopBtn?.background as? GradientDrawable)?.setColor(
+            if (action.stopsInput) Color.rgb(239, 68, 68) else Color.rgb(16, 185, 129))
+    }
+
+    internal fun recordRelayContact() { lastRelayContactMs = SystemClock.elapsedRealtime() }
+
+    internal fun acceptDeskPacket(session: String, packet: JSONObject) {
+        if (agentDesk.receive(session, packet)) cancelMobilePlan("Cancelled or invalidated by bridge")
+    }
+
+    internal fun onRemoteDisconnected() {
+        cancelMobilePlan("Remote session disconnected")
+        agentDesk.disconnect()
+        lastRelayContactMs = 0L
+    }
+
+    private fun cancelMobilePlan(reason: String) {
+        mobilePlanJob?.cancel()
+        mobilePlanJob = null
+        agentDesk.cancel(reason)
+        remoteGate.invalidateFrame()
+    }
+
+    private fun takeManualControl() {
+        userInputHold = true
+        cancelMobilePlan("User took control or started typing")
+        botLoopJob?.cancel(); botLoopJob = null
+        manualActionJob?.cancel(); manualActionJob = null
+        WaspMobileState.update { it.copy(isRunning = false, statusText = "MANUAL CONTROL") }
+    }
+
+    private fun shareAgentRequest(typed: String) {
+        takeManualControl()
+        val state = agentDesk.state.value
+        val request = typed.trim().ifBlank { state.messages.lastOrNull { it.role == "user" }?.text.orEmpty() }
+        val content = "For this OSRS/WaspMobile conversation only: use the connected WaspMobile MCP tools. Device: ${state.deviceId}. " +
+            "Read wasp_inbox, reply with wasp_reply, and propose any mobile script with wasp_offer_plan for my on-phone approval. " +
+            "Keep this request in this OSRS conversation; do not route it to another project or agent. " +
+            "Do not assume the bridge is installed or connected until the tool call succeeds. My request: $request"
+        val send = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, content) }
+        runCatching { startActivity(Intent.createChooser(send, "Choose ChatGPT, then this OSRS conversation")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            .onFailure { WaspMobileState.log("Share sheet unavailable; open ChatGPT and read the MCP inbox.") }
+    }
+
+    private fun planInputReady(session: String, windowKey: String): Boolean =
+        remoteGate.isSession(session) && phoneMcpBridge?.enabled == true && !userInputHold &&
+            agentPanel?.isEditing != true && !WaspMobileState.state.value.isRunning && manualActionJob?.isActive != true &&
+            WaspMobileState.state.value.calibrationMode == CalibrationMode.NONE &&
+            SystemClock.elapsedRealtime() - lastRelayContactMs in 0L..6000L && currentRemoteWindow()?.key == windowKey
+
+    private suspend fun observePlanFrame(windowKey: String): PlanFrame? {
+        val window = currentRemoteWindow()?.takeIf { it.key == windowKey } ?: return null
+        val bitmap = captureRemoteWindow(window) ?: return null
+        try {
+            if (currentRemoteWindow()?.key != windowKey || bitmap.width != window.bounds.width() ||
+                bitmap.height != window.bounds.height()) return null
+            return withContext(Dispatchers.Default) {
+                val scale = minOf(1f, 512f / bitmap.width, 512f / bitmap.height)
+                val sample = if (scale < 1f) Bitmap.createScaledBitmap(bitmap,
+                    (bitmap.width * scale).toInt().coerceAtLeast(1), (bitmap.height * scale).toInt().coerceAtLeast(1), false) else bitmap
+                try {
+                    val pixels = IntArray(sample.width * sample.height)
+                    sample.getPixels(pixels, 0, sample.width, 0, 0, sample.width, sample.height)
+                    PlanFrame(windowKey, sample.width, sample.height, pixels)
+                } finally { if (sample !== bitmap) sample.recycle() }
+            }
+        } finally { bitmap.recycle() }
+    }
+
+    private suspend fun tapPlanTarget(target: PlanTarget, session: String, windowKey: String): Boolean {
+        val window = currentRemoteWindow()?.takeIf { it.key == windowKey } ?: return false
+        val x = window.bounds.left + (target.x * window.bounds.width()).toInt()
+        val y = window.bounds.top + (target.y * window.bounds.height()).toInt()
+        fun guard(): Boolean {
+            if (!planInputReady(session, windowKey) || agentPanel?.contains(x, y) == true) return false
+            val current = currentRemoteWindow() ?: return false
+            if (current.blocked.any { it.contains(x, y) }) return false
+            val pill = pillRootView
+            if (pill != null) {
+                val pos = IntArray(2); pill.getLocationOnScreen(pos)
+                if (Rect(pos[0], pos[1], pos[0] + pill.width, pos[1] + pill.height).contains(x, y)) return false
+            }
+            return true
+        }
+        if (!guard()) return false
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        val gesture = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0L, 60L)).build()
+        return touchEngine.dispatchGestureAndAwait(this, gesture, 600L, ::guard)
+    }
+
+    private fun approveMobilePlan(id: String, sha256: String) {
+        if (mobilePlanJob?.isActive == true || phoneMcpBridge?.enabled != true || Build.VERSION.SDK_INT < 34) return
+        val offer = agentDesk.approve(id, sha256) ?: return
+        val session = agentDesk.state.value.session
+        agentPanel?.watch()
+        userInputHold = false
+        remoteGate.invalidateFrame()
+        mobilePlanJob = serviceScope.launch {
+            val ownJob = coroutineContext[Job]
+            try {
+                delay(650L) // Allow keyboard/focus to settle; actual window checks still decide readiness.
+                val windowKey = currentRemoteWindow()?.key ?: error("Bring OSRS to a single unlocked foreground window")
+                if (!planInputReady(session, windowKey)) error("Connection lease or input state is not ready")
+                val result = withTimeout(offer.plan.maxRuntimeMs) {
+                    MobilePlanRunner(object : MobilePlanDriver {
+                        override fun now() = SystemClock.elapsedRealtime()
+                        override fun ready(windowKey: String) = planInputReady(session, windowKey)
+                        override suspend fun observe() = observePlanFrame(windowKey)
+                        override suspend fun tap(target: PlanTarget, windowKey: String) = tapPlanTarget(target, session, windowKey)
+                        override fun progress(step: Int, detail: String) = agentDesk.progress(id, step, detail)
+                    }).run(offer.plan, windowKey)
+                }
+                agentDesk.finish(id, if (result.completed) "COMPLETED" else "FAILED", result.detail)
+            } catch (_: TimeoutCancellationException) {
+                agentDesk.finish(id, "FAILED", "Runtime budget expired; no automatic resume")
+            } catch (e: CancellationException) {
+                agentDesk.finish(id, "CANCELLED", "Local plan cancelled; already delivered input cannot be undone")
+                throw e
+            } catch (e: Exception) {
+                agentDesk.finish(id, "FAILED", e.message?.take(160) ?: "Plan stopped")
+            } finally {
+                if (mobilePlanJob === ownJob) mobilePlanJob = null
+                remoteGate.invalidateFrame()
+            }
+        }
+    }
+
+    private data class RemoteWindow(val id: Int, val bounds: Rect, val key: String, val blocked: List<Rect>)
+
+    /** Query actual interactive windows; a stale package event is not authorization. */
+    @Suppress("DEPRECATION")
+    private fun currentRemoteWindow(): RemoteWindow? {
+        val power = getSystemService(PowerManager::class.java)
+        val lock = getSystemService(KeyguardManager::class.java)
+        if (power?.isInteractive != true || lock?.isKeyguardLocked != false) return null
+        val all = runCatching { windows }.getOrNull() ?: return null
+        try {
+            val applications = all.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            // Multi-window/Secure Folder selection is deliberately unsupported, not guessed.
+            if (applications.size != 1) return null
+            val game = applications.single()
+            if (!game.isActive || !game.isFocused || game.displayId != Display.DEFAULT_DISPLAY) return null
+            val root = game.root ?: return null
+            val owner = try { root.packageName?.toString() } finally { root.recycle() }
+            if (owner != "com.jagex.oldscape.android") return null
+            if (all.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD ||
+                    (it.type == AccessibilityWindowInfo.TYPE_SYSTEM && (it.isActive || it.isFocused)) }) return null
+            val bounds = Rect().also { game.getBoundsInScreen(it) }
+            val screen = getPhysicalScreenBounds()
+            if (bounds.width() < 100 || bounds.height() < 100 || !screen.contains(bounds)) return null
+            val rotation = (getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
+                .getDisplay(Display.DEFAULT_DISPLAY)?.rotation ?: return null
+            val blocked = all.filter { it.id != game.id && it.layer > game.layer &&
+                it.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY }
+                .map { window -> Rect().also { window.getBoundsInScreen(it) } }
+            val key = "${game.id}:${bounds.left}:${bounds.top}:${bounds.width()}:${bounds.height()}:$rotation:$remoteGeometryRevision"
+            return RemoteWindow(game.id, bounds, key, blocked)
+        } finally { all.forEach { it.recycle() } }
+    }
+
+    internal fun remoteDeviceStatus(): JSONObject {
+        val window = if (Build.VERSION.SDK_INT >= 34) currentRemoteWindow() else null
+        return JSONObject().put("inputAllowed", !userInputHold && agentPanel?.isEditing != true && mobilePlanJob?.isActive != true)
+            .put("foreground", if (window != null) "com.jagex.oldscape.android" else "")
+            .put("windowKey", window?.key ?: "").put("width", window?.bounds?.width() ?: 0)
+            .put("height", window?.bounds?.height() ?: 0)
+            .put("status", if (window == null) "Game window unverified, locked, obscured or unsupported" else "GAME_WINDOW_READY")
+    }
+
+    /** API 34+ window-only capture: never export the full phone display to an LLM. */
+    private suspend fun captureRemoteWindow(window: RemoteWindow): Bitmap? = screenshotMutex.withLock {
+        if (Build.VERSION.SDK_INT < 34 || currentRemoteWindow()?.key != window.key) return@withLock null
+        val elapsed = SystemClock.elapsedRealtime() - lastScreenshotMs
+        if (elapsed < 450L) delay(450L - elapsed)
+        coroutineContext.ensureActive()
+        if (currentRemoteWindow()?.key != window.key) return@withLock null
+        withTimeoutOrNull(2500L) {
+            suspendCancellableCoroutine<Bitmap?> { cont ->
+                val delivered = AtomicBoolean(false)
+                try {
+                    lastScreenshotMs = SystemClock.elapsedRealtime()
+                    takeScreenshotOfWindow(window.id, screenshotExecutor, object : TakeScreenshotCallback {
+                        override fun onSuccess(screenshot: ScreenshotResult) {
+                            val bitmap = try {
+                                screenshot.hardwareBuffer.use { buffer ->
+                                    val hardware = Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace)
+                                    try { hardware?.copy(Bitmap.Config.ARGB_8888, false) }
+                                    finally { hardware?.recycle() }
+                                }
+                            } catch (_: Exception) { null }
+                            if (delivered.compareAndSet(false, true) && cont.isActive) {
+                                cont.resume(bitmap, onCancellation = { _, value, _ -> value?.recycle() })
+                            } else bitmap?.recycle()
+                        }
+                        override fun onFailure(errorCode: Int) {
+                            if (delivered.compareAndSet(false, true) && cont.isActive) cont.resume(null)
+                        }
+                    })
+                } catch (_: Exception) {
+                    if (delivered.compareAndSet(false, true) && cont.isActive) cont.resume(null)
+                }
+            }
+        }
+    }
+
+    private suspend fun executeRemoteMcpCommand(
+        id: String, type: String, params: JSONObject, session: String, deadline: Long
+    ): JSONObject {
+        fun rejected(message: String) = JSONObject().put("ok", false).put("error", message).put("mayHaveExecuted", false)
+        fun sessionReady() = remoteGate.isSession(session) && SystemClock.elapsedRealtime() < deadline
+        coroutineContext.ensureActive()
+        if (!sessionReady()) return rejected("Remote session expired or disconnected")
+        if (type == "PAUSE") {
+            userInputHold = true
+            stopBotLoop(stopRemote = false)
+            remoteGate.invalidateFrame()
+            return JSONObject().put("ok", true).put("status", "LOCAL_AUTOMATION_PAUSED")
+        }
+        if (userInputHold || agentPanel?.isEditing == true || mobilePlanJob?.isActive == true) {
+            return rejected("User typing, manual control, or approved local plan owns input")
+        }
+        if (Build.VERSION.SDK_INT < 34) return rejected("Remote capture requires Android 14 or later")
+        val state = WaspMobileState.state.value
+        if (state.isRunning || manualActionJob?.isActive == true || state.calibrationMode != CalibrationMode.NONE) {
+            return rejected("Local automation or calibration owns input")
+        }
+        val window = currentRemoteWindow() ?: return rejected("No single, unlocked foreground OSRS window")
+        if (params.optString("windowKey") != window.key) return rejected("Window changed; observe again")
+        return when (type) {
+            "OBSERVE" -> {
+                remoteGate.invalidateFrame()
+                val capturedAt = SystemClock.elapsedRealtime()
+                val bitmap = captureRemoteWindow(window) ?: return rejected("Window screenshot unavailable")
+                try {
+                    if (!sessionReady() || currentRemoteWindow()?.key != window.key ||
+                        bitmap.width != window.bounds.width() || bitmap.height != window.bounds.height()) {
+                        return rejected("Window changed during capture or unexpected capture dimensions")
+                    }
+                    val encoded = withContext(Dispatchers.Default) {
+                        val scale = minOf(1f, 1024f / bitmap.width, 1024f / bitmap.height)
+                        val resized = if (scale < 1f) Bitmap.createScaledBitmap(bitmap,
+                            (bitmap.width * scale).toInt().coerceAtLeast(1), (bitmap.height * scale).toInt().coerceAtLeast(1), true) else bitmap
+                        try {
+                            val bytes = ByteArrayOutputStream()
+                            check(resized.compress(Bitmap.CompressFormat.JPEG, 68, bytes))
+                            check(bytes.size() <= 650_000)
+                            Triple(Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP), resized.width, resized.height)
+                        } finally { if (resized !== bitmap) resized.recycle() }
+                    }
+                    coroutineContext.ensureActive()
+                    if (!sessionReady() || currentRemoteWindow()?.key != window.key ||
+                        !remoteGate.recordFrame(id, window.key, capturedAt, session)) return rejected("Observation invalidated")
+                    JSONObject().put("ok", true).put("status", "GAME_WINDOW_CAPTURED").put("frame", encoded.first)
+                        .put("imageWidth", encoded.second).put("imageHeight", encoded.third)
+                        .put("windowKey", window.key).put("width", window.bounds.width()).put("height", window.bounds.height())
+                } finally { if (!bitmap.isRecycled) bitmap.recycle() }
+            }
+            "TAP" -> {
+                val x = (params.opt("x") as? Number)?.toDouble() ?: return rejected("Invalid x")
+                val y = (params.opt("y") as? Number)?.toDouble() ?: return rejected("Invalid y")
+                if (!x.isFinite() || !y.isFinite() || x !in 0.02..0.98 || y !in 0.02..0.98) return rejected("Invalid point")
+                if (!remoteGate.consumeFrame(params.optString("frameId"), window.key, session)) return rejected("Fresh frame required")
+                val px = window.bounds.left + (x * window.bounds.width()).toInt()
+                val py = window.bounds.top + (y * window.bounds.height()).toInt()
+                fun inputReady(): Boolean {
+                    if (!sessionReady() || userInputHold || agentPanel?.isEditing == true ||
+                        agentPanel?.contains(px, py) == true || mobilePlanJob?.isActive == true || WaspMobileState.state.value.isRunning ||
+                        WaspMobileState.state.value.calibrationMode != CalibrationMode.NONE) return false
+                    val current = currentRemoteWindow() ?: return false
+                    if (current.key != window.key || current.blocked.any { it.contains(px, py) }) return false
+                    val pill = pillRootView
+                    if (pill != null && pill.visibility == View.VISIBLE) {
+                        val position = IntArray(2); pill.getLocationOnScreen(position)
+                        if (Rect(position[0], position[1], position[0] + pill.width, position[1] + pill.height).contains(px, py)) return false
+                    }
+                    return true
+                }
+                if (!inputReady()) return rejected("Target obscured or input ownership changed")
+                val path = Path().apply { moveTo(px.toFloat(), py.toFloat()) }
+                val gesture = GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(path, 0L, 60L)).build()
+                val completed = touchEngine.dispatchGestureAndAwait(this, gesture, 600L, ::inputReady)
+                JSONObject().put("ok", completed).put("mayHaveExecuted", true)
+                    .put("status", if (completed) "GESTURE_COMPLETED_VERIFY_GAME" else "GESTURE_OUTCOME_UNKNOWN")
+                    .put("error", if (completed) "" else "No confirmed completion; observe before further input")
+            }
+            else -> rejected("Unsupported operation")
+        }
+    }
+
     /**
      * Captures a clean, overlay-free ARGB_8888 Bitmap of the display:
      * 1. Temporarily suppresses `VisualOverlayCanvas` drawing with a multi-frame delay (55ms)
@@ -910,12 +1318,12 @@ class WaspAccessibilityService : AccessibilityService() {
         mainHandler.post { canvasOverlayView?.invalidate() }
         try {
             // Wait 55ms ensures at least 2-3 display refresh cycles at 60Hz (50ms) or 6+ at 120Hz,
-            // guaranteeing SurfaceFlinger has latched the transparent buffer before capture
+            // best-effort settling only; this is not a compositor synchronization guarantee
             delay(55L)
 
             val backoffs = longArrayOf(450L, 700L, 1000L)
             for (attempt in 0..3) {
-                val elapsed = System.currentTimeMillis() - lastScreenshotMs
+                val elapsed = SystemClock.elapsedRealtime() - lastScreenshotMs
                 if (elapsed in 0..420L) {
                     delay(430L - elapsed)
                 }
@@ -924,7 +1332,7 @@ class WaspAccessibilityService : AccessibilityService() {
                 val bmp = withTimeoutOrNull(2500L) {
                     suspendCancellableCoroutine<Bitmap?> { cont ->
                         try {
-                            lastScreenshotMs = System.currentTimeMillis()
+                            lastScreenshotMs = SystemClock.elapsedRealtime()
                             takeScreenshot(
                                 Display.DEFAULT_DISPLAY,
                                 screenshotExecutor,
@@ -951,7 +1359,7 @@ class WaspAccessibilityService : AccessibilityService() {
                                             null
                                         }
                                         if (cont.isActive) {
-                                            cont.resume(swBitmap)
+                                            cont.resume(swBitmap, onCancellation = { _, value, _ -> value?.recycle() })
                                         } else {
                                             swBitmap?.recycle()
                                         }
@@ -1191,14 +1599,19 @@ class WaspAccessibilityService : AccessibilityService() {
         knownScreenBounds: Rect? = null
     ) {
         val state = WaspMobileState.state.value
-        val screenBounds = knownScreenBounds ?: getPhysicalScreenBounds()
-        var activeFilledSlots = knownFilledSlots
+        val screenBounds = getPhysicalScreenBounds()
+        if (currentRemoteWindow() == null) return
+        var activeFilledSlots: Set<Int>? = null
 
         // Capture a clean screenshot to inspect Backpack tab, Tap-to-Drop hotkey, and slot occupancy
-        val checkBmp = captureScreenBitmap()
+        val checkBmp = captureScreenBitmap() ?: run {
+            WaspMobileState.log("Inventory screenshot unavailable; drop cancelled.")
+            WaspMobileState.update { it.copy(statusText = "DROP PAUSED: NO SCREENSHOT") }
+            return
+        }
         var tabWasClosed = false
-        if (checkBmp != null) {
-            try {
+        var dropWasInactive = false
+        try {
                 // 1. Check if Backpack tab is open; if not, tap Backpack tab (0.925f, 0.495f) and wait 300ms
                 val isTabOpen = withContext(Dispatchers.Default) {
                     visionEngine.isInventoryTabOpen(checkBmp)
@@ -1212,7 +1625,10 @@ class WaspAccessibilityService : AccessibilityService() {
                         (screenBounds.width() * (0.925f + 0.010f)).toInt(),
                         (screenBounds.height() * (0.495f + 0.010f)).toInt()
                     )
-                    touchEngine.dispatchHumanTap(this, tabBox, screenBounds)
+                    if (!touchEngine.dispatchHumanTap(this, tabBox, screenBounds)) {
+                        WaspMobileState.log("Backpack tab tap did not complete; drop cancelled.")
+                        return
+                    }
                     delay(300L)
                 }
 
@@ -1221,6 +1637,7 @@ class WaspAccessibilityService : AccessibilityService() {
                     visionEngine.isTapToDropActive(checkBmp)
                 }
                 if (!isDropActive) {
+                    dropWasInactive = true
                     WaspMobileState.update { it.copy(statusText = "ACTIVATING TAP-TO-DROP...") }
                     val hotkeyBox = Rect(
                         (screenBounds.width() * (0.064f - 0.010f)).toInt(),
@@ -1228,7 +1645,10 @@ class WaspAccessibilityService : AccessibilityService() {
                         (screenBounds.width() * (0.064f + 0.010f)).toInt(),
                         (screenBounds.height() * (0.566f + 0.010f)).toInt()
                     )
-                    touchEngine.dispatchHumanTap(this, hotkeyBox, screenBounds)
+                    if (!touchEngine.dispatchHumanTap(this, hotkeyBox, screenBounds)) {
+                        WaspMobileState.log("Tap-to-Drop toggle did not complete; drop cancelled.")
+                        return
+                    }
                     delay(250L)
                 }
 
@@ -1242,30 +1662,40 @@ class WaspAccessibilityService : AccessibilityService() {
                         visionEngine.detectFilledInventorySlots(checkBmp, bmpInvRect)
                     }
                 }
-            } finally {
-                if (!checkBmp.isRecycled) checkBmp.recycle()
-            }
+        } finally {
+            if (!checkBmp.isRecycled) checkBmp.recycle()
         }
 
-        // If tab was previously closed or slots were unknown, capture a fresh screenshot to detect filled slots
-        if (activeFilledSlots == null || tabWasClosed) {
-            val freshBmp = captureScreenBitmap()
-            if (freshBmp != null) {
-                try {
-                    val bmpInvRect = visionEngine.normToScreenRect(
-                        state.invBoxNorm,
-                        freshBmp.width,
-                        freshBmp.height
-                    )
-                    activeFilledSlots = withContext(Dispatchers.Default) {
-                        visionEngine.detectFilledInventorySlots(freshBmp, bmpInvRect)
-                    }
-                } finally {
-                    if (!freshBmp.isRecycled) freshBmp.recycle()
+        // Any UI change invalidates previous slot coordinates and detection.
+        // Confirm both controls and refresh occupancy before a destructive action.
+        run { // Always re-observe, even when the caller supplied an older scan.
+            val freshBmp = captureScreenBitmap() ?: run {
+                WaspMobileState.log("Unable to verify inventory after UI change; drop cancelled.")
+                WaspMobileState.update { it.copy(statusText = "DROP PAUSED: VERIFY SCREENSHOT") }
+                return
+            }
+            try {
+                val controlsReady = withContext(Dispatchers.Default) {
+                    visionEngine.isInventoryTabOpen(freshBmp) &&
+                        visionEngine.isTapToDropActive(freshBmp)
                 }
+                if (!controlsReady) {
+                    WaspMobileState.log("Backpack or Tap-to-Drop state unverified; drop cancelled.")
+                    WaspMobileState.update { it.copy(statusText = "DROP PAUSED: CONTROLS UNKNOWN") }
+                    return
+                }
+                val bmpInvRect = visionEngine.normToScreenRect(
+                    state.invBoxNorm, freshBmp.width, freshBmp.height
+                )
+                activeFilledSlots = withContext(Dispatchers.Default) {
+                    visionEngine.detectFilledInventorySlots(freshBmp, bmpInvRect)
+                }
+            } finally {
+                if (!freshBmp.isRecycled) freshBmp.recycle()
             }
         }
 
+        val dropWindow = currentRemoteWindow() ?: return
         val screenInvRect = visionEngine.normToScreenRect(
             state.invBoxNorm,
             screenBounds.width(),
@@ -1278,10 +1708,11 @@ class WaspAccessibilityService : AccessibilityService() {
         if (state.protectSlot2) protectedSlots.add(1)
 
         val dropOrder = touchEngine.generateHumanDropOrder(protectedSlots)
-        val slotsToTap = if (activeFilledSlots != null) {
-            dropOrder.filter { it in activeFilledSlots }
-        } else {
-            dropOrder
+        val slotsToTap = VerifiedInventoryDrop.plan(activeFilledSlots, dropOrder, protectedSlots)
+        if (slotsToTap == null) {
+            WaspMobileState.log("Occupied inventory slots are unknown or invalid; drop cancelled.")
+            WaspMobileState.update { it.copy(statusText = "DROP PAUSED: INVENTORY UNKNOWN") }
+            return
         }
 
         if (slotsToTap.isEmpty()) {
@@ -1298,18 +1729,24 @@ class WaspAccessibilityService : AccessibilityService() {
         WaspMobileState.log("Dropping inventory (${slotsToTap.size} slots) in humanized pattern...")
 
         for (slotIdx in slotsToTap) {
-            if (!coroutineContext.isActive || !WaspMobileState.state.value.isRunning) {
-                break
+            if (!coroutineContext.isActive || !WaspMobileState.state.value.isRunning ||
+                currentRemoteWindow()?.key != dropWindow.key) {
+                return
             }
             if (slotIdx in slotRects.indices) {
-                touchEngine.dispatchHumanTap(this, slotRects[slotIdx], screenBounds)
+                if (!touchEngine.dispatchHumanTap(this, slotRects[slotIdx], screenBounds)) {
+                    WaspMobileState.log("Slot ${slotIdx + 1} gesture cancelled or timed out; remaining drops skipped.")
+                    WaspMobileState.update { it.copy(statusText = "DROP PAUSED: GESTURE UNCERTAIN") }
+                    return
+                }
                 mainHandler.post { canvasOverlayView?.invalidate() }
                 delay(Random.nextLong(65L, 175L))
             }
         }
-        val remainingFilled = activeFilledSlots?.count { it in protectedSlots } ?: protectedSlots.size
-        lastFilledSlotsCount = remainingFilled
-        WaspMobileState.update { it.copy(statusText = "DROP COMPLETE", filledSlots = remainingFilled) }
+        // Dispatch completion is not proof that the game removed those items.
+        // Next capture must establish the observed occupancy.
+        lastFilledSlotsCount = -1
+        WaspMobileState.update { it.copy(statusText = "DROP INPUT SENT: VERIFY NEXT SCAN") }
     }
 
     /**

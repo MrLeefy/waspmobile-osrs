@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "title": "Observe-only connection test",
+  "purpose": "Capture the selected game window, wait briefly, and verify it remains available. No taps or game actions.",
+  "maxRuntimeMs": 10000,
+  "steps": [
+    {
+      "op": "observe",
+      "label": "Read the selected game window"
+    },
+    {
+      "op": "wait",
+      "label": "Brief observation interval",
+      "ms": 500
+    },
+    {
+      "op": "observe",
+      "label": "Capture a fresh game frame"
+    }
+  ]
+}
