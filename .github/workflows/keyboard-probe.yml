@@ -5,31 +5,23 @@ on:
     paths: ['.github/workflows/keyboard-probe.yml']
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 jobs:
   keyboard:
     runs-on: ubuntu-latest
     timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Apply reviewed editor and test fix as normal source
+      - name: Record exact reviewed source
         run: |
-          python3 repair/fix-overlay-keyboard.py
           git diff --check
-          git add app/src/main/java/com/example/waspmobile/service/AgentPanel.kt app/src/androidTest/java/com/example/waspmobile/service/OverlayWindowTest.kt
-          if ! git diff --cached --quiet; then
-            git -c user.name='OSRS Recovery' -c user.email='95941803+MrLeefy@users.noreply.github.com' commit -m 'fix: synchronize overlay IME with window focus and assert real keyboard visibility [skip ci]'
-            git push origin HEAD:fix/osrs-overlay-recovery-oct24
-          fi
           mkdir -p verification/keyboard
           git rev-parse HEAD > verification/keyboard/source-sha.txt
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Compile actual corrected Android app and emulator tests
+      - name: Compile corrected Android app and emulator tests
         id: build
         run: bash gradlew :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:lintDebug --no-daemon --max-workers=2
       - name: Full JVM suite (fixture failures recorded, not hidden)
@@ -109,4 +101,6 @@ jobs:
           allowed={'com.example.waspmobile.engine.AdversarialM4ClusterTest','com.example.waspmobile.engine.AdversarialM4Test','com.example.waspmobile.vision.RealScreenshotVisionTest'}
           assert sum(x['tests'] for x in d['jvm']) >= 131
           assert all(x['name'] in allowed for x in d['jvm'] if x['failures'])
+          assert sum(x['failures'] for x in d['jvm']) <= 11
+          assert all(x['errors']==0 and x['skipped']==0 for x in d['jvm'])
           PY
