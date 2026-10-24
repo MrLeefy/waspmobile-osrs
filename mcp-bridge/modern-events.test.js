@@ -50,5 +50,5 @@ test('modern subscribe rejects unpaired device before contacting callback URL', 
     delivery:{mode:'webhook',url:'https://hooks.work.openai.com/private',
       secret:'whsec_'+Buffer.alloc(32,21).toString('base64')},
     cursor:null
-  }},z.unknown()),/Pair and enable/);
+  }},z.unknown()),/Pair or pin/);
 });

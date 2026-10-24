@@ -82,7 +82,8 @@ test('explicit phone ID refuses the wrong first device', async t => {
   const f = setup(t,{allowedDeviceId:'my-s23'});
   const rejected = await f.poll('other-phone','session-a');
   assert.equal(rejected.status,400);
-  assert.equal(f.relay.list().length,0);
+  assert.deepEqual(f.relay.list().map(x=>({id:x.id,online:x.online})),
+    [{id:'my-s23',online:false}]);
   assert.equal((await f.poll('my-s23','session-a')).status,200);
 });
 

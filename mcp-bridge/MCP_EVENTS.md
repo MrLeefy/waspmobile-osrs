@@ -1,4 +1,6 @@
 # Live OSRS overlay messages through MCP Events
+**Offline pairing:** An explicitly pinned, previously authenticated S23 can be subscribed to MCP Events while OSRS is in the background. Subscription delivery is still disabled until the phone reconnects. This lets the user authorize Work/dot monitoring from the same mobile phone without leaving OSRS permanently running during setup.
+
 
 **October 24 gateway upgrade:** The existing Oracle Admin tunnel now supports WaspMobile MCP 2.0 Events. Legacy Oracle Admin tools remain available; event-capable modern sessions expose OSRS tools and harmless diagnostics, not privileged admin shell or file access. See [ORACLE_ADMIN_MCP2_UPGRADE.md](ORACLE_ADMIN_MCP2_UPGRADE.md). The ChatGPT Work/dot subscription must still be created by an authorized agent.
 

@@ -295,10 +295,18 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
       return !!(fresh(device) && device.enabled && device.session===sessionId);
     },
     setEventSummary:callback=>{if(typeof callback==='function')eventSummary=callback;},
+    isPairedDevice:id=>idOk(id) && pairedDeviceId===id,
     inbox: (id, after) => desk.inbox(deskDevice(id), after),
     reply: (id, args) => desk.reply(deskDevice(id), args),
     offerPlan: (id, plan, requestId) => desk.offer(deskDevice(id), plan, requestId),
     cancelPlan: id => { desk.stop(deskDevice(id)); return {status: 'CANCEL_REQUESTED', note: 'Phone receives cancellation on next poll; already dispatched input cannot be undone'}; },
-    list: () => { sweep(); return [...devices.values()].map(summary); }};
+    list: () => {
+      sweep();
+      const result=[...devices.values()].map(summary);
+      if(!result.length && allowedDeviceId)result.push({id:allowedDeviceId,
+        online:false,remoteEnabled:false,foreground:false,inputAllowed:false,
+        frameAvailable:false,singleDeviceMode:true,status:'Pinned phone offline; reconnect WaspMobile'});
+      return result;
+    }};
 }
 module.exports = {createRelay, GAME_PACKAGE};

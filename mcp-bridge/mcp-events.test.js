@@ -14,10 +14,10 @@ const encryptionKey=Buffer.alloc(32,71).toString('base64');
 const eventSecret='whsec_'+Buffer.alloc(32,34).toString('base64');
 const url='https://hooks.work.openai.com/event-callback/private123';
 
-async function fixture(t,{post,now,allowHosts=['openai.com'],key=encryptionKey}={}){
+async function fixture(t,{post,now,allowHosts=['openai.com'],key=encryptionKey,allowedDeviceId=''}={}){
   let current=Date.now();
   const temp=await fs.mkdtemp(path.join(os.tmpdir(),'wasp-events-test-'));
-  const relay=createRelay({token,now:now||(()=>current),onlineMs:10000});
+  const relay=createRelay({token,now:now||(()=>current),onlineMs:10000,allowedDeviceId});
   await new Promise(resolve=>relay.server.listen(0,'127.0.0.1',resolve));
   const port=relay.server.address().port;
   const headers={'content-type':'application/json',authorization:'Bearer '+token};
@@ -75,13 +75,13 @@ test('event feature requires non-plaintext AES-256-GCM storage key',async t=>{
  const f=await fixture(t);
  assert.throws(()=>createMcpEvents({relay:f.relay,enabled:true,storageKey:'short'}),/STORAGE_KEY/);
 });
-test('subscription demands an online, enabled and matching phone',async t=>{
+test('subscription demands an already paired or pinned phone identity',async t=>{
  const f=await fixture(t);
- await assert.rejects(f.subscribe(),/Pair and enable/);
+ await assert.rejects(f.subscribe(),/Pair or pin/);
  await f.poll({remoteEnabled:false});
- await assert.rejects(f.subscribe(),/Pair and enable/);
- await f.poll();
+ // The known authenticated phone may subscribe while OSRS is backgrounded.
  assert.equal((await f.subscribe()).cursor,null);
+ await f.poll();
 });
 test('webhook challenge is verified and signed before storing subscription',async t=>{
  const calls=[];
@@ -137,7 +137,7 @@ test('a callback for another phone or Work/dot cannot subscribe while current su
  await f.poll();
  await f.subscribe();
  await assert.rejects(f.subscribe({delivery:{mode:'webhook',url:'https://another.openai.com/hook',secret:eventSecret}}),/Another Work/);
- await assert.rejects(f.subscribe({arguments:{device_id:'second-phone'}}),/Pair and enable/);
+ await assert.rejects(f.subscribe({arguments:{device_id:'second-phone'}}),/Pair or pin/);
 });
 test('unsubscribe revokes event delivery and can be repeated idempotently',async t=>{
  const delivered=[];
@@ -245,4 +245,17 @@ test('MCP Events refuses a too-short lease and caps excessive lease requests',as
  await assert.rejects(f.subscribe({ttlMs:5_000}),/Invalid subscription TTL/);
  const offered=await f.subscribe({ttlMs:30*86400000});
  assert.ok(Date.parse(offered.refreshBefore)-Date.now() <= 7*86400000+1000);
+});
+
+test('explicitly pinned offline S23 can subscribe before OSRS is opened',async t=>{
+ const f=await fixture(t,{allowedDeviceId:'s23-one'});
+ const offline=f.relay.list();
+ assert.equal(offline.length,1);
+ assert.equal(offline[0].online,false);
+ assert.equal(offline[0].id,'s23-one');
+ const result=await f.subscribe();
+ assert.equal(typeof result.id,'string');
+ assert.equal(f.events.summary('s23-one').subscribed,true);
+ assert.equal(f.relay.sessionActive('s23-one','phone-session-1'),false);
+ await assert.rejects(f.subscribe({arguments:{device_id:'other-device'}}),/Pair or pin/);
 });

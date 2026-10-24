@@ -1,4 +1,6 @@
 # Oracle Admin MCP2 gateway for OSRS
+**Offline pairing:** An explicitly pinned, previously authenticated S23 can be subscribed to MCP Events while OSRS is in the background. Subscription delivery is still disabled until the phone reconnects. This lets the user authorize Work/dot monitoring from the same mobile phone without leaving OSRS permanently running during setup.
+
 
 The existing Oracle Admin Secure MCP Tunnel main channel was upgraded in place. Its original nine tools remain available to legacy ChatGPT clients with unchanged schemas and results. The gateway also forwards WaspMobile's 15 private MCP tools from the Oracle loopback service and advertises the overlay.message.created event through MCP protocol 2026-07-28.
 

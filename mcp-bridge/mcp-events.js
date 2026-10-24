@@ -227,8 +227,12 @@ function createMcpEvents({
       throw new ProtocolError(-32602,'Invalid subscription TTL (minimum one minute)');
     }
     const grantedMs=params.ttlMs == null ? EXPIRY_MS : Math.min(EXPIRY_MS,params.ttlMs);
-    const device=relay.list().find(x=>x.id===args.device_id);
-    if(!device||!device.online||!device.remoteEnabled)throw new ProtocolError(-32602,'Pair and enable the selected phone before subscribing');
+    // The S23 can temporarily go offline when switching from OSRS to the
+    // ChatGPT Work/dot setup screen. Authorize only the previously paired or
+    // explicitly pinned phone ID; webhook delivery still requires a fresh
+    // authenticated session and never executes while the phone is offline.
+    if(!relay.isPairedDevice(args.device_id))
+      throw new ProtocolError(-32602,'Pair or pin the selected phone before subscribing');
     parseCallbackUrl(delivery.url,allowedHosts);
     // The first one-phone version admits ONE ChatGPT Work/dot subscriber.
     // Never forward private overlay messages to a surprise second callback.
