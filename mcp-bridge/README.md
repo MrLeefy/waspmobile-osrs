@@ -2,6 +2,10 @@
 
 **Status: draft, not production-complete.** The new [Agent Desk and mobile executor](DASHBOARD.md) are implemented; see `dashboard-results.json` for current checks and [AUDIT.md](AUDIT.md) for the preceding audit. This is not a connected ChatGPT session merely because the code exists in GitHub.
 
+## Reuse the existing Oracle Admin plugin
+
+The existing connected Oracle Admin MCP plugin can now access all 15 private WaspMobile OSRS tools through the [on-demand Oracle Admin proxy](ORACLE_ADMIN_PROXY.md). This requires no second OpenAI tunnel and does not change the Oracle Admin service. **It is pull-based and does not automatically wake ChatGPT when the phone overlay queues a message.**
+
 ## Oracle VM — now hosted
 
 The single-phone HTTPS relay is live on Oracle at https://waspmobile.129.146.39.132.sslip.io. It requires the private pairing token shown by the Oracle command sudo wasp-osrs-pair. The MCP tools remain private and need a separate ChatGPT Secure MCP Tunnel. See [Oracle deployment status](ORACLE_DEPLOYMENT_STATUS.md). The HTTPS relay is Internet-reachable with token protection, not tailnet-only.

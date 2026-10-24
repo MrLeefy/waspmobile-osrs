@@ -12,6 +12,10 @@ This is **not** a second AI service, nor a modification to the OSRS APK. It uses
 
 Official reference: https://developers.openai.com/plugins/build/mcp-events
 
+## Existing Oracle Admin connection (on-demand tools)
+
+[Oracle Admin on-demand WaspMobile tool access](ORACLE_ADMIN_PROXY.md) is already working through the current connected Oracle Admin plugin, with no new tunnel credentials. It does not provide the MCP 2.0 event subscription required to wake a Work chat or dot on a new overlay message. Continue using a separate event-capable connector or explicitly review an Oracle Admin MCP 2.0 gateway if live push delivery is needed.
+
 ## Oracle hosting
 
 The [Oracle VM bridge](ORACLE_DEPLOYMENT_STATUS.md) is running, but the new OSRS-specific OpenAI tunnel and Work/dot subscription are not connected yet. Create the dedicated Platform tunnel, then run sudo wasp-osrs-link-tunnel interactively on Oracle. The VM does not require Windows Simba or Tailscale just to host the phone relay.

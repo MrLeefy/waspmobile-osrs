@@ -34,6 +34,10 @@
 
 A one-use HTTPS pairing page has been deployed to let the user copy the phone URL and credential directly from mobile. The live short-lived link is shared only in the ChatGPT conversation, never saved in repository files. The initial GET contains no persistent phone credential; one form POST with an unpredictable challenge reveals it once. The dedicated OpenAI tunnel and ChatGPT Work/dot subscription still require account-level authorization and are not active.
 
+## Existing Oracle Admin MCP access now available
+
+The existing Oracle Admin connection can directly invoke the isolated WaspMobile tool adapter using the command `/usr/local/sbin/wasp-osrs-mcp devices` and other approved WaspMobile MCP methods. It uses the private localhost MCP API and reads the local token without revealing it. All 15 original tools are reachable on demand. The Oracle Admin Python server is an older MCP version and cannot advertise MCP Events, so messages queued in the phone still do not automatically start a ChatGPT turn. See [ORACLE_ADMIN_PROXY.md](ORACLE_ADMIN_PROXY.md).
+
 ## Finish account-level activation
 
 1. SSH to the Oracle VM in a terminal and run `sudo wasp-osrs-pair`. The command intentionally refuses noninteractive execution to prevent leaking the pairing token. Enter the HTTPS URL and token in WaspMobile > MCP Phone Bridge on your S23.
