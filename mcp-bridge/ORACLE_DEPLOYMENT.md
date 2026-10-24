@@ -22,6 +22,10 @@ The VM's HTTPS phone address is:
 
 The VM does not run Windows Simba or WaspLib, so desktop-specific WaspLib probes/compilation are intentionally disabled. To use desktop Simba later, create a separate bounded PC client or site agent without broadening the phone's trust or opening the MCP listener publicly. The Android phone still controls OSRS via Accessibility. The actual OSRS game APK is not modified.
 
+## Mobile-only pairing
+
+A one-time mobile setup page is hosted at the existing HTTPS phone hostname under a randomized /pair/ URL. Opening the page does not disclose the token; clicking Reveal performs a same-origin, CSRF-protected POST and shows the phone server URL and credential once. It expires within an hour. The portal is isolated on loopback port 7789 under a separate service and can be renewed without changing the phone secret. Do not commit an active pairing URL or the token to GitHub.
+
 ## Service operation and verification
 
 ```bash

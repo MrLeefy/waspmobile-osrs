@@ -30,6 +30,10 @@
 - No Swarm or 2009Scape source was modified. No existing Oracle Admin tunnel ID was reused.
 - **Important:** The HTTPS phone hostname is internet-accessible but requires a strong token. It is not Tailscale-only. The MCP tool API remains inaccessible from that public hostname.
 
+## Phone setup without SSH
+
+A one-use HTTPS pairing page has been deployed to let the user copy the phone URL and credential directly from mobile. The live short-lived link is shared only in the ChatGPT conversation, never saved in repository files. The initial GET contains no persistent phone credential; one form POST reveals it once. The dedicated OpenAI tunnel and ChatGPT Work/dot subscription still require account-level authorization and are not active.
+
 ## Finish account-level activation
 
 1. SSH to the Oracle VM in a terminal and run `sudo wasp-osrs-pair`. The command intentionally refuses noninteractive execution to prevent leaking the pairing token. Enter the HTTPS URL and token in WaspMobile > MCP Phone Bridge on your S23.

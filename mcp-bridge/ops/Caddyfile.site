@@ -19,6 +19,9 @@ waspmobile.129.146.39.132.sslip.io {
             }
         }
     }
+    handle /pair/* {
+        reverse_proxy 127.0.0.1:7789
+    }
     handle {
         respond "Not found" 404
     }
