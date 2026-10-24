@@ -1,0 +1,64 @@
+name: OSRS actual landscape keyboard probe
+on:
+  push:
+    branches: [fix/osrs-overlay-recovery-oct24]
+    paths: ['.github/workflows/keyboard-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  keyboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: osrs-recovery-verification-a0251a30522b82ee44812bbb86b8236fb3b52ddc
+          run-id: 40134003936
+          github-token: ${{ github.token }}
+          path: /tmp/verified-build
+      - name: Enable virtualization
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Prepare exact APK instrumentation without rebuilding or signing
+        run: |
+          mkdir -p /tmp/keyboard-proof
+          cat > /tmp/probe.sh <<'SH'
+          #!/usr/bin/env bash
+          set -eu -o pipefail
+          app=/tmp/verified-build/app/build/outputs/apk/debug/app-debug.apk
+          tests=/tmp/verified-build/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          test -s "$app"; test -s "$tests"
+          sha256sum "$app" "$tests" > /tmp/keyboard-proof/apk-hashes.txt
+          adb install -r "$app"
+          adb install -r "$tests"
+          adb shell settings put secure show_ime_with_hard_keyboard 1
+          adb shell settings put system accelerometer_rotation 0
+          adb shell settings put system user_rotation 1
+          adb shell input keyevent KEYCODE_WAKEUP
+          adb shell wm dismiss-keyguard
+          adb shell am instrument -w -r -e class com.example.waspmobile.service.OverlayWindowTest com.example.waspmobile.test/androidx.test.runner.AndroidJUnitRunner | tee /tmp/keyboard-proof/instrumentation.txt
+          adb pull /sdcard/Download/osrs-recovery-screens /tmp/keyboard-proof/
+          adb logcat -d > /tmp/keyboard-proof/logcat.txt
+          grep -q 'OK (2 tests)' /tmp/keyboard-proof/instrumentation.txt
+          SH
+          chmod +x /tmp/probe.sh
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_7
+          emulator-boot-timeout: 240
+          disable-animations: true
+          script: bash /tmp/probe.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: osrs-landscape-ime-proof
+          path: /tmp/keyboard-proof/
+          retention-days: 7
+          if-no-files-found: error
