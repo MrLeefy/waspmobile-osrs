@@ -1,0 +1,132 @@
+name: OSRS overlay recovery verification
+on:
+  push:
+    branches: [fix/osrs-overlay-recovery-oct24]
+    paths: ['.github/workflows/overlay-recovery.yml', 'app/**', 'mcp-bridge/*.js', 'mcp-bridge/package*.json', 'repair/run-emulator-checks.sh']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: osrs-overlay-recovery-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  mcp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked SDK dependencies
+        run: npm ci --prefix mcp-bridge --ignore-scripts --no-audit --no-fund
+      - name: Run all portable MCP regressions (pipeline failures cannot be hidden)
+        id: node
+        run: |
+          set -o pipefail
+          cd mcp-bridge
+          npm test 2>&1 | tee /tmp/osrs-node-tests.log
+      - name: Archive dependency runtime for reproducible offline diagnosis
+        if: always()
+        run: |
+          mkdir -p verification
+          cp /tmp/osrs-node-tests.log verification/ 2>/dev/null || true
+          tar -czf verification/mcp-runtime.tgz -C mcp-bridge node_modules package.json package-lock.json
+          echo '${{ github.sha }}' > verification/source-sha.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: osrs-mcp-${{ github.sha }}
+          path: verification/
+          retention-days: 7
+          if-no-files-found: error
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive exact source
+        run: git archive --format=zip HEAD -o /tmp/osrs-source.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: osrs-repaired-source-${{ github.sha }}
+          path: /tmp/osrs-source.zip
+          retention-days: 7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android build, lint, unsigned release and instrumentation compile
+        id: build
+        continue-on-error: true
+        run: bash gradlew :app:assembleDebug :app:assembleRelease :app:lintDebug :app:assembleDebugAndroidTest --no-daemon --max-workers=2
+      - name: Complete Android unit suite (known screenshot failures stay visible)
+        id: unit
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        run: bash gradlew :app:testDebugUnitTest --no-daemon --max-workers=2
+      - name: Enable emulator virtualization
+        if: steps.build.outcome == 'success'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Real API 35 persistence, overlay window and keyboard tests
+        id: emulator
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_7
+          emulator-boot-timeout: 240
+          disable-animations: true
+          script: bash repair/run-emulator-checks.sh
+      - name: Record actual test results and deployment boundaries
+        if: always()
+        run: |
+          mkdir -p verification
+          python3 - <<'PY'
+          import json, pathlib, xml.etree.ElementTree as ET
+          suites=[]
+          for p in pathlib.Path('app/build/test-results/testDebugUnitTest').glob('TEST-*.xml'):
+              r=ET.parse(p).getroot(); suites.append({'name':r.get('name'),**{k:int(r.get(k,'0')) for k in ['tests','failures','errors','skipped']}})
+          totals={k:sum(s[k] for s in suites) for k in ['tests','failures','errors','skipped']}
+          device=[]
+          for p in pathlib.Path('app/build/outputs/androidTest-results').rglob('TEST-*.xml'):
+              r=ET.parse(p).getroot(); device.append({'name':r.get('name'),**{k:int(r.get(k,'0')) for k in ['tests','failures','errors','skipped']}})
+          result={'source':'${{ github.sha }}','build_lint':'${{ steps.build.outcome }}','full_unit':'${{ steps.unit.outcome }}','emulator':'${{ steps.emulator.outcome }}','totals':totals,'suites':suites,'device_suites':device,'oracle_integration':'Not run: workflow has no Oracle credentials or live server access','signing':'CI DEBUG KEY OR UNSIGNED RELEASE ONLY. Not an in-place update. Do not uninstall the existing app.','physical_s23':'Not tested','live_deployment':'Not performed'}
+          pathlib.Path('verification/results.json').write_text(json.dumps(result,indent=2))
+          print(json.dumps(result,indent=2))
+          PY
+          cat verification/results.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: osrs-recovery-verification-${{ github.sha }}
+          path: |
+            verification/
+            app/build/reports/
+            app/build/test-results/
+            app/build/outputs/apk/
+            app/build/outputs/androidTest-results/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Fail on new regressions
+        if: always()
+        run: |
+          test '${{ steps.build.outcome }}' = success
+          test '${{ steps.emulator.outcome }}' = success
+          python3 - <<'PY'
+          import json
+          d=json.load(open('verification/results.json'))
+          allowed={'com.example.waspmobile.engine.AdversarialM4ClusterTest','com.example.waspmobile.engine.AdversarialM4Test','com.example.waspmobile.vision.RealScreenshotVisionTest'}
+          assert d['totals']['tests'] >= 131
+          assert d['totals']['errors'] == 0
+          assert all(s['name'] in allowed for s in d['suites'] if s['failures']), 'Unexpected Android assertion failure'
+          assert d['totals']['failures'] <= 11
+          assert sum(s['tests'] for s in d['device_suites']) >= 7
+          assert all(s['failures']==0 and s['errors']==0 and s['skipped']==0 for s in d['device_suites'])
+          PY

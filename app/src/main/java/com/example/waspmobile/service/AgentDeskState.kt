@@ -6,7 +6,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
-internal data class AgentMessage(val id: String, val role: String, val text: String, val queued: Boolean = false)
+internal data class AgentMessage(val id: String, val role: String, val text: String, val queued: Boolean = false,
+    val historical: Boolean = false, val interrupted: Boolean = false)
 internal data class PlanOffer(val id: String, val sha256: String, val planJson: String, val plan: MobilePlan, val expiresAt: Long)
 internal data class PlanProgress(val id: String, val sha256: String, val title: String, val status: String,
     val step: Int, val steps: Int, val detail: String)
@@ -16,21 +17,27 @@ internal data class AgentDeskSnapshot(val session: String = "", val deviceId: St
     val eventsAvailable: Boolean = false, val eventSubscribed: Boolean = false,
     val eventStatus: String = "No ChatGPT event subscription",
     val eventDelivery: String = "not_subscribed",
-    val notice: String = "Connect the MCP bridge in the main app first.")
+    val draft: String = "", val storageWarning: String = "",
+    val notice: String = "Save your connection, then connect to Oracle.")
 
-/** Thread-safe, bounded, memory-only transcript. Pairing credentials never enter this state. */
+/** Bounded transcript; only history/draft may persist. Live approvals and send queues never restore. */
 internal class AgentDeskState(private val now: () -> Long) {
     private val mutable = MutableStateFlow(AgentDeskSnapshot())
     val state = mutable.asStateFlow()
     private var epoch = ""
     @Synchronized fun begin(session: String, deviceId: String) {
         epoch = ""
+        val old = mutable.value
         mutable.value = AgentDeskSnapshot(session = session, deviceId = deviceId,
-            notice = "Connect an OSRS-only ChatGPT Work chat or dot using MCP Events. Without a subscription, messages stay queued in the MCP inbox.")
+            messages = old.messages.map { it.copy(queued = false, historical = true, interrupted = it.interrupted || it.queued) },
+            draft = old.draft, storageWarning = old.storageWarning,
+            notice = "Oracle connected does not mean AI is subscribed. Check the separate AI status before expecting a reply.")
     }
     @Synchronized fun disconnect() {
         cancel("Remote session disconnected", includeOffer = true)
         mutable.value = mutable.value.copy(session = "", outbox = emptyList(), agentActive = false,
+            eventsAvailable = false, eventSubscribed = false, eventDelivery = "not_subscribed",
+            messages = mutable.value.messages.map { it.copy(queued = false, interrupted = it.interrupted || it.queued, historical = true) },
             notice = "Disconnected. Unsent requests are not replayed into a new session.")
     }
     @Synchronized fun queue(text: String): Boolean {
@@ -59,7 +66,8 @@ internal class AgentDeskState(private val now: () -> Long) {
         if (epoch.isNotBlank() && incomingEpoch != epoch) {
             stop = true
             s = s.copy(afterSeq = 0, proposal = null, progress = s.progress?.copy(status = "CANCELLED", detail = "Bridge restarted"),
-                messages = emptyList(), notice = "Bridge restarted; old history and approvals were invalidated.")
+                messages = s.messages.map { it.copy(historical = true, queued = false, interrupted = it.interrupted || it.queued) },
+                outbox = emptyList(), notice = "Oracle restarted. Prior messages are history; old actions will not run.")
         }
         epoch = incomingEpoch
         val acks = data.optJSONArray("ackMessages")
@@ -114,6 +122,37 @@ internal class AgentDeskState(private val now: () -> Long) {
         }
         mutable.value = s
         return stop
+    }
+    @Synchronized fun setDraft(text: String) {
+        mutable.value = mutable.value.copy(draft = text.take(1000))
+    }
+    @Synchronized fun persistenceWarning(message: String) {
+        if (mutable.value.storageWarning != message) mutable.value = mutable.value.copy(storageWarning = message.take(180))
+    }
+    @Synchronized fun exportHistory(): String = JSONObject().put("version", 1)
+        .put("draft", mutable.value.draft).put("messages", JSONArray().apply {
+            mutable.value.messages.takeLast(40).forEach { m -> put(JSONObject()
+                .put("id", m.id).put("role", m.role).put("text", m.text)
+                .put("interrupted", m.interrupted || m.queued)) }
+        }).toString()
+    @Synchronized fun restoreHistory(raw: String) {
+        require(raw.toByteArray(Charsets.UTF_8).size <= 262_144)
+        val json = JSONObject(raw)
+        require(json.optInt("version") == 1)
+        val source = json.optJSONArray("messages") ?: JSONArray()
+        val messages = (maxOf(0, source.length() - 40) until source.length()).mapNotNull { i ->
+            val m = source.optJSONObject(i) ?: return@mapNotNull null
+            val id = m.optString("id"); val role = m.optString("role"); val text = m.optString("text")
+            if (!id.matches(Regex("[A-Za-z0-9_-]{1,64}")) || role !in setOf("user", "agent", "system") ||
+                text.isBlank() || text.length > 1000) null
+            else AgentMessage(id, role, text, historical = true, interrupted = m.optBoolean("interrupted"))
+        }
+        mutable.value = AgentDeskSnapshot(messages = messages.distinctBy { it.id },
+            draft = json.optString("draft").take(1000), notice = "Local chat restored. No old messages or actions will be resent.")
+    }
+    @Synchronized fun transportLost() {
+        mutable.value = mutable.value.copy(agentActive = false, eventSubscribed = false,
+            eventDelivery = "offline", eventStatus = "Waiting for a fresh Oracle connection")
     }
     @Synchronized fun approve(id: String, sha256: String): PlanOffer? {
         val s = mutable.value; val proposal = s.proposal ?: return null

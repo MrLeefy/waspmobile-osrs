@@ -37,14 +37,19 @@ internal class PhoneMcpBridge(
 
     fun start(): Boolean {
         if (enabled) return true
-        val config = readSettings(service) ?: return false
+        val config = BridgeSettingsStore.read(service) ?: run {
+            mutableStatus.value = Status(message = "No usable saved connection. Open Connection and save the URL and token.", phase = BridgePhase.CONFIG_ERROR)
+            return false
+        }
         val session = UUID.randomUUID().toString()
         settings = config
+        BridgeSettingsStore.setDesired(service, true)
         sessionId = session
         service.remoteGate.enable(session)
         service.agentDesk.begin(session, config.deviceId)
-        mutableStatus.value = Status(true, false, "Connecting to private bridge")
+        mutableStatus.value = Status(true, false, "Connecting to Oracle…", phase = BridgePhase.CONNECTING)
         pollJob = scope.launch(Dispatchers.IO) {
+            var failures = 0
             try {
                 while (isActive && sessionId == session) {
                     try {
@@ -59,7 +64,14 @@ internal class PhoneMcpBridge(
                             service.recordRelayContact()
                             answer.optJSONObject("desk")?.let { service.acceptDeskPacket(session, it) }
                         }
-                        mutableStatus.value = Status(true, true, "Connected to private MCP bridge")
+                        val eventInfo = answer.optJSONObject("desk")?.optJSONObject("events")
+                        mutableStatus.value = Status(true, true, "Oracle connected", phase = BridgePhase.CONNECTED,
+                            lastContactAt = SystemClock.elapsedRealtime(),
+                            eventsAvailable = eventInfo?.optBoolean("available") == true,
+                            eventSubscribed = eventInfo?.optBoolean("available") == true && eventInfo?.optBoolean("subscribed") == true,
+                            eventDelivery = eventInfo?.optString("lastDelivery").orEmpty(),
+                            windowReady = payload.optString("foreground") == "com.jagex.oldscape.android",
+                            inputAllowed = payload.optBoolean("inputAllowed"))
                         val command = answer.optJSONObject("command")
                         if (command != null) {
                             val id = command.optString("id")
@@ -78,6 +90,7 @@ internal class PhoneMcpBridge(
                             result.put("deviceId", config.deviceId).put("sessionId", session).put("id", id)
                             post(config, "/device/result", result)
                         }
+                        failures = 0
                         delay(500L)
                     } catch (e: CancellationException) {
                         throw e
@@ -85,18 +98,59 @@ internal class PhoneMcpBridge(
                         withContext(Dispatchers.Main) {
                             if (sessionId == session) {
                                 sessionId = null
+                                // Invalid authentication is not transient. Stop opted-in
+                                // background reconnects until a user saves a new token.
+                                BridgeSettingsStore.setDesired(service, false)
                                 service.onRemoteDisconnected()
                                 service.remoteGate.disable()
-                                mutableStatus.value = Status(false, false, "Pairing token rejected; reconnect locally")
+                                mutableStatus.value = Status(false, false, "Oracle rejected the saved token. Re-pair in Connection; no background retries will run.", phase = BridgePhase.AUTH_REJECTED)
                             }
                         }
                         break
-                    } catch (_: Exception) {
+                    } catch (failure: Exception) {
                         if (sessionId == session) {
-                            service.remoteGate.invalidateFrame()
-                            mutableStatus.value = Status(true, false, "Bridge unreachable; no actions are retried")
+                            if ((failure is RelayRejected && BridgeRetryPolicy.isPermanentHttp(failure.status)) ||
+                                failure is javax.net.ssl.SSLHandshakeException ||
+                                failure is javax.net.ssl.SSLPeerUnverifiedException) {
+                                withContext(Dispatchers.Main) {
+                                    if (sessionId == session) {
+                                        BridgeSettingsStore.setDesired(service, false)
+                                        sessionId = null
+                                        service.onRemoteDisconnected()
+                                        service.remoteGate.disable()
+                                        val explanation = if (failure is RelayRejected)
+                                            "Oracle rejected the phone profile (HTTP ${failure.status}). Check the URL and pinned Phone ID."
+                                        else "HTTPS certificate verification failed. Check Oracle's trusted certificate; never bypass verification."
+                                        mutableStatus.value = Status(false, false,
+                                            "$explanation Automatic retries stopped; reconnect after correcting it.",
+                                            phase = BridgePhase.CONFIG_ERROR)
+                                    }
+                                }
+                                break
+                            }
+                            withContext(Dispatchers.Main) {
+                                service.pauseForConnectionLoss()
+                                service.agentDesk.transportLost()
+                            }
+                            failures = (failures + 1).coerceAtMost(100)
+                            val retryDelay = BridgeRetryPolicy.delayMs(failures, kotlin.random.Random.nextLong(0, 501))
+                            val message = when (failure) {
+                                is RelayRejected -> when (failure.status) {
+                                    400, 409 -> "Oracle rejected this phone/session (HTTP ${failure.status}). Retrying safely; check the pinned Phone ID in Diagnostics."
+                                    403 -> "Oracle denied this connection (HTTP 403). Check the relay configuration."
+                                    404 -> "Server address is reachable, but the phone relay route was not found (HTTP 404)."
+                                    else -> "Oracle returned HTTP ${failure.status}. Retrying; no action is replayed."
+                                }
+                                is javax.net.ssl.SSLException -> "HTTPS certificate check failed. Do not bypass it; check the server."
+                                is java.net.UnknownHostException -> "Server name could not be resolved. Check the URL and connection."
+                                is java.net.SocketTimeoutException -> "Oracle timed out. Retrying; game input is paused."
+                                else -> "Oracle connection lost. Retrying; your saved profile and draft are retained."
+                            }
+                            mutableStatus.value = Status(true, false,
+                                "$message Next attempt in ${retryDelay / 1000}s; no actions will be replayed.",
+                                phase = BridgePhase.RETRYING)
+                            delay(retryDelay)
                         }
-                        delay(2000L)
                     }
                 }
             } finally {
@@ -113,7 +167,8 @@ internal class PhoneMcpBridge(
         return true
     }
 
-    fun stop() {
+    fun stop(preservePreference: Boolean = false) {
+        if (!preservePreference) BridgeSettingsStore.setDesired(service, false)
         val oldSession = sessionId
         val oldSettings = settings
         sessionId = null
@@ -133,6 +188,7 @@ internal class PhoneMcpBridge(
     }
 
     private class AuthRejected : Exception()
+    private class RelayRejected(val status: Int) : Exception()
     private suspend fun post(config: Settings, endpoint: String, payload: JSONObject, track: Boolean = true): JSONObject {
         currentCoroutineContext().ensureActive()
         val conn = URL(config.baseUrl + endpoint).openConnection() as HttpURLConnection
@@ -141,8 +197,8 @@ internal class PhoneMcpBridge(
         try {
             conn.requestMethod = "POST"
             conn.instanceFollowRedirects = false
-            conn.connectTimeout = if (track) 3000 else 1000
-            conn.readTimeout = if (track) 3000 else 1000
+            conn.connectTimeout = if (track) 6000 else 1000
+            conn.readTimeout = if (track) 8000 else 1000
             conn.doOutput = true
             conn.setRequestProperty("Authorization", "Bearer " + config.token)
             conn.setRequestProperty("Content-Type", "application/json")
@@ -152,7 +208,7 @@ internal class PhoneMcpBridge(
             conn.outputStream.use { it.write(body) }
             currentCoroutineContext().ensureActive()
             if (conn.responseCode == 401) throw AuthRejected()
-            check(conn.responseCode == 200) { "Relay rejected request" }
+            if (conn.responseCode != 200) throw RelayRejected(conn.responseCode)
             val output = ByteArrayOutputStream()
             conn.inputStream.use { input ->
                 val buffer = ByteArray(1024)
@@ -173,46 +229,20 @@ internal class PhoneMcpBridge(
     }
 
     internal data class Settings(val baseUrl: String, val token: String, val deviceId: String)
-    internal data class Status(val enabled: Boolean = false, val connected: Boolean = false, val message: String = "Disconnected")
+    internal data class Status(val enabled: Boolean = false, val connected: Boolean = false,
+        val message: String = "Not connected", val phase: BridgePhase = BridgePhase.IDLE,
+        val lastContactAt: Long = 0L, val eventsAvailable: Boolean = false,
+        val eventSubscribed: Boolean = false, val eventDelivery: String = "not_subscribed",
+        val windowReady: Boolean = false, val inputAllowed: Boolean = false)
 
     companion object {
-        private const val PREFS = "waspmobile_mcp_bridge"
-        private const val URL_KEY = "url"
-        private const val TOKEN_KEY = "token"
-        private const val DEVICE_ID_KEY = "device_id"
         private val mutableStatus = MutableStateFlow(Status())
         val status = mutableStatus.asStateFlow()
-        private val tokenPattern = Regex("[A-Za-z0-9_-]{32,128}")
-        fun savedUrl(context: Context): String = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(URL_KEY, "") ?: ""
-        fun savedDeviceId(context: Context): String = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(DEVICE_ID_KEY, "") ?: ""
-        fun save(context: Context, url: String, newToken: String): Boolean {
-            val normalized = url.trim().trimEnd('/')
-            if (!validHttpsUrl(normalized)) return false
-            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            // Never send a saved credential to a newly entered endpoint without fresh token entry.
-            if (newToken.isBlank() && prefs.getString(URL_KEY, "") != normalized) return false
-            val token = if (newToken.isBlank()) prefs.getString(TOKEN_KEY, "") ?: "" else newToken.trim()
-            if (!tokenPattern.matches(token)) return false
-            val id = prefs.getString(DEVICE_ID_KEY, "")?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,64}")) }
-                ?: "phone-" + UUID.randomUUID().toString()
-            prefs.edit().putString(URL_KEY, normalized).putString(TOKEN_KEY, token).putString(DEVICE_ID_KEY, id).apply()
-            return true
-        }
-        private fun readSettings(context: Context): Settings? {
-            val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val url = p.getString(URL_KEY, "") ?: ""
-            val token = p.getString(TOKEN_KEY, "") ?: ""
-            val id = p.getString(DEVICE_ID_KEY, "") ?: ""
-            if (!validHttpsUrl(url) || !tokenPattern.matches(token) || !id.matches(Regex("[A-Za-z0-9_-]{1,64}"))) return null
-            return Settings(url, token, id)
-        }
-        internal fun validHttpsUrl(value: String): Boolean = try {
-            val uri = URI(value)
-            uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank() &&
-                uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null &&
-                (uri.path.isNullOrEmpty() || uri.path == "/") && (uri.port == -1 || uri.port in 1..65535)
-        } catch (_: Exception) { false }
+        fun savedUrl(context: Context): String = BridgeSettingsStore.info(context).origin
+        fun savedDeviceId(context: Context): String = BridgeSettingsStore.info(context).deviceId
+        fun savedInfo(context: Context): SavedBridgeInfo = BridgeSettingsStore.info(context)
+        fun save(context: Context, url: String, newToken: String): Boolean =
+            BridgeSettingsStore.save(context, url, newToken).saved
+        internal fun validHttpsUrl(value: String): Boolean = BridgeConfigPolicy.normalizeOrigin(value) != null
     }
 }

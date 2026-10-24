@@ -11,8 +11,9 @@ android {
         applicationId = "com.example.waspmobile"
         minSdk = 30
         targetSdk = 36
-        versionCode = 5
-        versionName = "2.1.2-mcp-events-preview"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        versionCode = 6
+        versionName = "2.2.0-overlay-recovery-preview"
     }
 
     testOptions {

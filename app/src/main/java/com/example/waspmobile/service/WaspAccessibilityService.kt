@@ -56,6 +56,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -90,7 +93,7 @@ class WaspAccessibilityService : AccessibilityService() {
             val svc = instance ?: return false
             return if (enabled) {
                 svc.stopBotLoop()
-                svc.userInputHold = false
+                svc.userInputHold = true
                 svc.phoneMcpBridge?.start() == true
             } else {
                 svc.phoneMcpBridge?.stop()
@@ -99,6 +102,12 @@ class WaspAccessibilityService : AccessibilityService() {
         }
 
         fun isMcpRemoteEnabled(): Boolean = instance?.phoneMcpBridge?.enabled == true
+        fun showAgentDesk(): Boolean {
+            val svc = instance ?: return false
+            svc.mainHandler.post { svc.agentPanel?.show() }
+            return true
+        }
+        fun pauseInput() { instance?.takeManualControl() }
     }
 
     private lateinit var windowManager: WindowManager
@@ -123,7 +132,8 @@ class WaspAccessibilityService : AccessibilityService() {
     internal val agentDesk = AgentDeskState { SystemClock.elapsedRealtime() }
     private var agentPanel: AgentPanel? = null
     private var mobilePlanJob: Job? = null
-    private var userInputHold = false
+    private var userInputHold = true
+    private var historyStore: AgentHistoryStore? = null
     @Volatile private var lastRelayContactMs = 0L
 
     @Volatile
@@ -138,7 +148,7 @@ class WaspAccessibilityService : AccessibilityService() {
     private var lastScreenshotMs = 0L
     private val isSamplingColor = AtomicBoolean(false)
 
-    private var isCollapsed = false
+    private var isCollapsed = true
     private var dualWindowToggle = false
     private var lastTapWinA: PointF? = null
     private var lastTapWinB: PointF? = null
@@ -157,10 +167,14 @@ class WaspAccessibilityService : AccessibilityService() {
     private val modeChips = mutableMapOf<String, TextView>()
     private val presetChips = mutableMapOf<TargetColorPreset, TextView>()
 
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         WaspMobileState.loadPrefs(this)
+        isCollapsed = getSharedPreferences("osrs_overlay_ui", MODE_PRIVATE).getBoolean("pill_collapsed", true)
+        historyStore = AgentHistoryStore(this)
+        historyStore?.restore(agentDesk)
         WaspMobileState.update { it.copy(serviceConnected = true, statusText = "READY (Overlay Active)") }
         WaspMobileState.log("Accessibility Overlay connected over OSRS Mobile.")
 
@@ -186,6 +200,16 @@ class WaspAccessibilityService : AccessibilityService() {
         }
 
         serviceScope.launch {
+            agentDesk.state.map { agentDesk.exportHistory() }.distinctUntilChanged().debounce(250L)
+                .collect { historyStore?.save(it) { agentDesk.persistenceWarning("Chat could not be saved on this phone.") } }
+        }
+        // Only reconnect messaging when explicitly opted in. Input remains held;
+        // prior approvals, input permission, commands and sends never restore.
+        if (BridgeSettingsStore.shouldReconnect(this)) {
+            userInputHold = true
+            phoneMcpBridge?.start()
+        }
+        serviceScope.launch {
             WaspMobileState.state.collect { state ->
                 updateOverlayFromState(state.isRunning, state.calibrationMode)
             }
@@ -193,6 +217,7 @@ class WaspAccessibilityService : AccessibilityService() {
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
+        val reopenAgent = agentPanel?.isShowing == true
         agentPanel?.close()
         cancelMobilePlan("Display configuration changed")
         super.onConfigurationChanged(newConfig)
@@ -206,6 +231,7 @@ class WaspAccessibilityService : AccessibilityService() {
                 runCatching { windowManager.updateViewLayout(pill, params) }
             }
             canvasOverlayView?.invalidate()
+            if (reopenAgent) runCatching { agentPanel?.show() }
         }
     }
 
@@ -218,14 +244,15 @@ class WaspAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
-        phoneMcpBridge?.stop()
-        stopBotLoop()
+        // Interruption pauses gameplay, not the saved conversation transport.
+        takeManualControl()
     }
 
     override fun onDestroy() {
+        historyStore?.save(agentDesk.exportHistory())
         agentPanel?.close()
         agentPanel = null
-        phoneMcpBridge?.stop()
+        phoneMcpBridge?.stop(preservePreference = true)
         phoneMcpBridge = null
         stopBotLoop()
         instance = null
@@ -246,6 +273,8 @@ class WaspAccessibilityService : AccessibilityService() {
     }
 
     fun shutdownAndDisable() {
+        historyStore?.save(agentDesk.exportHistory())
+        BridgeSettingsStore.setDesired(this, false)
         agentPanel?.close()
         agentPanel = null
         phoneMcpBridge?.stop()
@@ -382,7 +411,7 @@ class WaspAccessibilityService : AccessibilityService() {
         colorSwatchView = swatch
 
         val titleTv = TextView(this).apply {
-            text = "🐝 WASP MOBILE"
+            text = "OSRS"
             setTextColor(Color.rgb(56, 189, 248))
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
@@ -390,25 +419,26 @@ class WaspAccessibilityService : AccessibilityService() {
         }
 
         val collapseBtn = TextView(this).apply {
-            text = " [–] "
+            text = if (isCollapsed) " [+] " else " [–] "
             setTextColor(Color.rgb(148, 163, 184))
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
             setOnClickListener {
                 isCollapsed = !isCollapsed
+                getSharedPreferences("osrs_overlay_ui", MODE_PRIVATE).edit().putBoolean("pill_collapsed", isCollapsed).apply()
                 expandedBodyLayout?.visibility = if (isCollapsed) View.GONE else View.VISIBLE
                 text = if (isCollapsed) " [+] " else " [–] "
             }
         }
 
         val closeBtn = TextView(this).apply {
-            text = " [✕] "
+            text = " Pause "
             setTextColor(Color.rgb(239, 68, 68))
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(4), dp(2), dp(4), dp(2))
             setOnClickListener {
-                shutdownAndDisable()
+                takeManualControl()
             }
         }
 
@@ -431,6 +461,7 @@ class WaspAccessibilityService : AccessibilityService() {
             ).apply { topMargin = dp(4) }
         }
         expandedBodyLayout = body
+        body.visibility = if (isCollapsed) View.GONE else View.VISIBLE
 
         val statusTv = TextView(this).apply {
             text = "IDLE (Ready)"
@@ -750,6 +781,13 @@ class WaspAccessibilityService : AccessibilityService() {
                     runCatching { windowManager.updateViewLayout(root, params) }
                     true
                 }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    val screen = getPhysicalScreenBounds()
+                    getSharedPreferences("osrs_overlay_ui", MODE_PRIVATE).edit()
+                        .putFloat("pill_x", OverlayPlacement.fraction(params.x, screen.width(), root.width))
+                        .putFloat("pill_y", OverlayPlacement.fraction(params.y, screen.height(), root.height)).apply()
+                    true
+                }
                 else -> false
             }
         }
@@ -757,6 +795,14 @@ class WaspAccessibilityService : AccessibilityService() {
         pillRootView = root
         pillParams = params
         runCatching { windowManager.addView(root, params) }
+        root.post {
+            val saved = getSharedPreferences("osrs_overlay_ui", MODE_PRIVATE)
+            val screen = getPhysicalScreenBounds()
+            params.x = OverlayPlacement.coordinate(saved.getFloat("pill_x", .03f), screen.width(), root.width)
+            params.y = OverlayPlacement.coordinate(saved.getFloat("pill_y", .07f), screen.height(), root.height)
+            clampPillToScreen(params, root)
+            runCatching { windowManager.updateViewLayout(root, params) }
+        }
     }
 
     private fun makeChip(text: String, isSelected: Boolean, onClick: () -> Unit): TextView {
@@ -796,8 +842,8 @@ class WaspAccessibilityService : AccessibilityService() {
             setTextColor(Color.WHITE)
             textSize = 10f
             isAllCaps = false
-            minHeight = 0
-            minimumHeight = 0
+            minHeight = dp(40)
+            minimumHeight = dp(40)
             minWidth = 0
             minimumWidth = 0
             setPadding(dp(8), dp(5), dp(8), dp(5))
@@ -1018,6 +1064,11 @@ class WaspAccessibilityService : AccessibilityService() {
     }
 
     internal fun recordRelayContact() { lastRelayContactMs = SystemClock.elapsedRealtime() }
+    internal fun pauseForConnectionLoss() {
+        userInputHold = true
+        cancelMobilePlan("Oracle connection interrupted; approve a fresh plan to continue")
+        remoteGate.invalidateFrame()
+    }
 
     internal fun acceptDeskPacket(session: String, packet: JSONObject) {
         if (agentDesk.receive(session, packet)) cancelMobilePlan("Cancelled or invalidated by bridge")
@@ -1145,7 +1196,7 @@ class WaspAccessibilityService : AccessibilityService() {
 
     /** Query actual interactive windows; a stale package event is not authorization. */
     @Suppress("DEPRECATION")
-    private fun currentRemoteWindow(): RemoteWindow? {
+    private fun currentRemoteWindow(requireInput: Boolean = true): RemoteWindow? {
         val power = getSystemService(PowerManager::class.java)
         val lock = getSystemService(KeyguardManager::class.java)
         if (power?.isInteractive != true || lock?.isKeyguardLocked != false) return null
@@ -1155,11 +1206,16 @@ class WaspAccessibilityService : AccessibilityService() {
             // Multi-window/Secure Folder selection is deliberately unsupported, not guessed.
             if (applications.size != 1) return null
             val game = applications.single()
-            if (!game.isActive || !game.isFocused || game.displayId != Display.DEFAULT_DISPLAY) return null
+            if (game.displayId != Display.DEFAULT_DISPLAY) return null
+            if (requireInput && (!game.isActive || !game.isFocused)) return null
+            // With the OSRS-only accessibility overlay focused, the one verified
+            // OSRS application can still be captured, but never tapped.
+            if (!requireInput && !game.isActive && !game.isFocused &&
+                all.none { it.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && (it.isActive || it.isFocused) }) return null
             val root = game.root ?: return null
             val owner = try { root.packageName?.toString() } finally { root.recycle() }
             if (owner != "com.jagex.oldscape.android") return null
-            if (all.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD ||
+            if (all.any { (requireInput && it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) ||
                     (it.type == AccessibilityWindowInfo.TYPE_SYSTEM && (it.isActive || it.isFocused)) }) return null
             val bounds = Rect().also { game.getBoundsInScreen(it) }
             val screen = getPhysicalScreenBounds()
@@ -1175,8 +1231,9 @@ class WaspAccessibilityService : AccessibilityService() {
     }
 
     internal fun remoteDeviceStatus(): JSONObject {
-        val window = if (Build.VERSION.SDK_INT >= 34) currentRemoteWindow() else null
-        return JSONObject().put("inputAllowed", !userInputHold && agentPanel?.isEditing != true && mobilePlanJob?.isActive != true)
+        val window = if (Build.VERSION.SDK_INT >= 34) currentRemoteWindow(requireInput = false) else null
+        return JSONObject().put("inputAllowed", !userInputHold && agentPanel?.isEditing != true &&
+            mobilePlanJob?.isActive != true && currentRemoteWindow() != null)
             .put("foreground", if (window != null) "com.jagex.oldscape.android" else "")
             .put("windowKey", window?.key ?: "").put("width", window?.bounds?.width() ?: 0)
             .put("height", window?.bounds?.height() ?: 0)
@@ -1185,11 +1242,11 @@ class WaspAccessibilityService : AccessibilityService() {
 
     /** API 34+ window-only capture: never export the full phone display to an LLM. */
     private suspend fun captureRemoteWindow(window: RemoteWindow): Bitmap? = screenshotMutex.withLock {
-        if (Build.VERSION.SDK_INT < 34 || currentRemoteWindow()?.key != window.key) return@withLock null
+        if (Build.VERSION.SDK_INT < 34 || currentRemoteWindow(requireInput = false)?.key != window.key) return@withLock null
         val elapsed = SystemClock.elapsedRealtime() - lastScreenshotMs
         if (elapsed < 450L) delay(450L - elapsed)
         coroutineContext.ensureActive()
-        if (currentRemoteWindow()?.key != window.key) return@withLock null
+        if (currentRemoteWindow(requireInput = false)?.key != window.key) return@withLock null
         withTimeoutOrNull(2500L) {
             suspendCancellableCoroutine<Bitmap?> { cont ->
                 val delivered = AtomicBoolean(false)
@@ -1232,15 +1289,16 @@ class WaspAccessibilityService : AccessibilityService() {
             remoteGate.invalidateFrame()
             return JSONObject().put("ok", true).put("status", "LOCAL_AUTOMATION_PAUSED")
         }
-        if (userInputHold || agentPanel?.isEditing == true || mobilePlanJob?.isActive == true) {
-            return rejected("User typing, manual control, or approved local plan owns input")
+        if (mobilePlanJob?.isActive == true || (type == "TAP" && (userInputHold || agentPanel?.isEditing == true))) {
+            return rejected("Input is paused, being edited, or owned by an approved plan")
         }
         if (Build.VERSION.SDK_INT < 34) return rejected("Remote capture requires Android 14 or later")
         val state = WaspMobileState.state.value
         if (state.isRunning || manualActionJob?.isActive == true || state.calibrationMode != CalibrationMode.NONE) {
             return rejected("Local automation or calibration owns input")
         }
-        val window = currentRemoteWindow() ?: return rejected("No single, unlocked foreground OSRS window")
+        val window = currentRemoteWindow(requireInput = type == "TAP")
+            ?: return rejected("OSRS must be the only visible application, with the phone unlocked")
         if (params.optString("windowKey") != window.key) return rejected("Window changed; observe again")
         return when (type) {
             "OBSERVE" -> {
@@ -1248,7 +1306,7 @@ class WaspAccessibilityService : AccessibilityService() {
                 val capturedAt = SystemClock.elapsedRealtime()
                 val bitmap = captureRemoteWindow(window) ?: return rejected("Window screenshot unavailable")
                 try {
-                    if (!sessionReady() || currentRemoteWindow()?.key != window.key ||
+                    if (!sessionReady() || currentRemoteWindow(requireInput = false)?.key != window.key ||
                         bitmap.width != window.bounds.width() || bitmap.height != window.bounds.height()) {
                         return rejected("Window changed during capture or unexpected capture dimensions")
                     }
@@ -1264,7 +1322,7 @@ class WaspAccessibilityService : AccessibilityService() {
                         } finally { if (resized !== bitmap) resized.recycle() }
                     }
                     coroutineContext.ensureActive()
-                    if (!sessionReady() || currentRemoteWindow()?.key != window.key ||
+                    if (!sessionReady() || currentRemoteWindow(requireInput = false)?.key != window.key ||
                         !remoteGate.recordFrame(id, window.key, capturedAt, session)) return rejected("Observation invalidated")
                     JSONObject().put("ok", true).put("status", "GAME_WINDOW_CAPTURED").put("frame", encoded.first)
                         .put("imageWidth", encoded.second).put("imageHeight", encoded.third)
