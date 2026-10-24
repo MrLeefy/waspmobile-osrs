@@ -49,13 +49,18 @@ class OverlayWindowTest {
         shell("settings put secure accessibility_enabled ${if (oldEnabled == "1") "1" else "0"}")
     }
     private fun capture(name: String) {
+        require(name.matches(Regex("[a-z-]+")))
         instrument.waitForIdleSync()
         SystemClock.sleep(400)
         val bitmap = automation.takeScreenshot()
         assertNotNull("Actual emulator screenshot must be available", bitmap)
-        val folder = File(context.getExternalFilesDir(null), "recovery-screens").apply { mkdirs() }
-        File(folder, "$name.png").outputStream().use { bitmap!!.compress(Bitmap.CompressFormat.PNG, 100, it) }
         bitmap?.recycle()
+        // Gradle may uninstall the test app and delete app-owned files afterward.
+        // Shell-owned screenshots on this disposable emulator survive that cleanup.
+        shell("mkdir -p /sdcard/Download/osrs-recovery-screens")
+        shell("screencap -p /sdcard/Download/osrs-recovery-screens/$name.png")
+        val size = shell("stat -c %s /sdcard/Download/osrs-recovery-screens/$name.png").toLongOrNull() ?: 0L
+        assertTrue("The captured image must contain an actual screen", size > 1000L)
     }
     private fun makePanel(desk: AgentDeskState, onTakeControl: () -> Unit = {}): AgentPanel {
         val service = requireNotNull(WaspAccessibilityService.instance)
