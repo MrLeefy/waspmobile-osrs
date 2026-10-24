@@ -4,6 +4,12 @@ A human-biometric automation and computer-vision overlay ecosystem for **Old Sch
 
 ---
 
+## Single-device OSRS pilot (October 2026)
+
+The first mobile rollout is limited to **one Samsung S23, one active OSRS game window/character at a time, and one MCP controller**. This is an execution limit, **not an account-identity lock**. Remote multi-window/Secure Folder control, dual split UI, and the separate Swarm service are not part of this pilot.
+
+The actual one-phone constraints, pairing and tests are documented in [ONE_PHONE_PILOT.md](mcp-bridge/ONE_PHONE_PILOT.md). The APK is a development preview, not certified on a physical S23.
+
 ## MCP development status (audited draft branch)
 
 **Project scope:** This repository and its Agent Desk belong to the OSRS/WaspMobile conversation only. Keep other game projects, conversations, agents and task queues separate.

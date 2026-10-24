@@ -58,7 +58,7 @@ internal class AgentPanel(
             }
         }
         val header = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        header.addView(label("AGENT DESK", 14f).apply { typeface = Typeface.DEFAULT_BOLD }, LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(label("OSRS AGENT · ONE PHONE", 14f).apply { typeface = Typeface.DEFAULT_BOLD }, LinearLayout.LayoutParams(0, -2, 1f))
         header.addView(button("Close") { close() })
         panel.addView(header)
         connection = label(""); panel.addView(connection)

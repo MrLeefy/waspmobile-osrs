@@ -136,6 +136,7 @@ test('MCP cancellation removes queued action without replay', async t => {
 test('session replacement cancels pending commands and clears images', async t => {
   const f = await fixture(t); await f.poll(); await f.observe();
   const pending = f.relay.request('phone01', 'OBSERVE');
+  f.advance(10001); // Stale prior session can be replaced after its lease expires.
   await f.poll({sessionId: 'session-replaced'});
   assert.equal((await pending).ok, false);
   assert.throws(() => f.relay.getFrame('phone01'));

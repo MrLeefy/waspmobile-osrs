@@ -14,7 +14,9 @@ const integer = (v, lo, hi) => Number.isSafeInteger(v) && v >= lo && v <= hi;
 
 /** An instance owns its resources; importing this module starts no I/O. */
 function createRelay({token, now = () => performance.now(), commandMs = 10000,
-  onlineMs = 10000, frameMs = 15000, maxDevices = 8} = {}) {
+  onlineMs = 10000, frameMs = 15000, maxDevices = 1, allowedDeviceId = ''} = {}) {
+  if (maxDevices !== 1) throw new Error('Single-phone pilot only: maxDevices must equal 1');
+  if (allowedDeviceId && !idOk(allowedDeviceId)) throw new Error('Invalid WASP_ALLOWED_DEVICE_ID');
   if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(token)) {
     throw new Error('WASP_DEVICE_TOKEN must contain 32..128 ASCII letters, digits, _ or -');
   }
@@ -22,6 +24,9 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
   const devices = new Map();
   const pending = new Map();
   const desk = createAgentDesk({now});
+  // Bind to the first valid device for the lifetime of this process; never silently
+  // replace it when its heartbeat expires. Optional configured ID survives restarts.
+  let pairedDeviceId = allowedDeviceId || null;
   let closing = false;
 
   function authenticate(req) {
@@ -72,7 +77,8 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
     return {id: device.id, online: fresh(device), remoteEnabled: device.enabled && fresh(device),
       foreground: device.foreground && fresh(device), windowKey: device.windowKey,
       width: device.width, height: device.height, status: device.status, inputAllowed: device.inputAllowed,
-      frameAvailable: !!device.frame && now() - device.frame.at <= frameMs};
+      frameAvailable: !!device.frame && now() - device.frame.at <= frameMs,
+      singleDeviceMode: true};
   }
   function sweep() {
     for (const [id, device] of devices) {
@@ -86,12 +92,19 @@ function createRelay({token, now = () => performance.now(), commandMs = 10000,
 
   function register(data) {
     if (!idOk(data.deviceId) || !idOk(data.sessionId)) throw new Error('Invalid device/session');
+    if (pairedDeviceId && data.deviceId !== pairedDeviceId) {
+      throw new Error('Single-phone pilot is already paired to a different phone');
+    }
     let device = devices.get(data.deviceId);
+    if (device && device.session && device.session !== data.sessionId && device.enabled && fresh(device)) {
+      throw new Error('An active session already controls this phone; disconnect or wait for its lease to expire');
+    }
     if (!device) {
       sweep();
       if (devices.size >= maxDevices) throw new Error('Device limit reached');
       device = {id: data.deviceId, task: null, frame: null};
       devices.set(device.id, device);
+      pairedDeviceId = data.deviceId;
     }
     const enabled = data.remoteEnabled === true;
     const foreground = data.foreground === GAME_PACKAGE;

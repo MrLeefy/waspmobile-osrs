@@ -6,6 +6,10 @@ This file describes this repository's tool contract. It does not install a ChatG
 
 Use this workflow only for the OSRS/WaspMobile conversation and its explicitly paired devices. Do not route OSRS requests to another game project's agent, import another conversation's task queue, or treat shared infrastructure as permission to combine projects. Android sharing requires the user to select this OSRS conversation; it is not automatic conversation routing.
 
+## One-phone limit
+
+Use exactly one user-paired Samsung S23 and one selected foreground OSRS game window for this pilot. Do not search for additional devices or run multi-account/multi-window workflows, even if one instance is temporarily offline. The standalone Swarm server is outside the mobile pilot's scope. A phone ID identifies the connection, not an authenticated RuneScape account identity.
+
 ## Establish a real connection
 
 Call `wasp_devices`. Select the exact paired phone identified by the user or the current task; do not guess that the first device belongs to the intended session. An enabled relay is not proof that OSRS is foreground or that remote input is currently allowed. Do not claim the phone is connected until the actual call succeeds.

@@ -1,4 +1,6 @@
-# Agent Desk and approved mobile scripts
+# Agent Desk and approved mobile scripts — one-phone OSRS pilot
+
+The initial rollout is strictly one S23/one active OSRS game window/one automation controller, not a bot Swarm. The first phone is pinned by the MCP relay; the optional configured Phone ID preserves this across relay restarts. The active game account is not cryptographically identified from screen pixels. See [ONE_PHONE_PILOT.md](ONE_PHONE_PILOT.md).
 
 This development build adds a native floating **Agent Desk** and a bounded mobile-plan executor. It extends the audited bridge; it does not automatically connect ChatGPT, sign into an OpenAI account, install an APK on a phone, or merge the draft PR.
 
@@ -81,7 +83,7 @@ The existing private token authenticates the phone relay. It remains a privilege
 
 | Check | Actual result |
 |---|---|
-| Node / MCP suite | **78 passed, 0 failed, 0 skipped; clean exit** |
+| Node / MCP suite | **78 passed, 0 failed, 0 skipped; clean exit** (previous milestone; single-device test results are in ONE_PHONE_PILOT.md) |
 | New Android dashboard/plan tests | **30 passed, 0 failed** |
 | Full Android unit suite | **114 total: 103 passed, 11 failed, 0 skipped**; the 11 failures require the missing original S23 screenshots |
 | Shared Node/Kotlin plan contract | **21 synthetic cases accepted/rejected consistently** |
@@ -94,7 +96,7 @@ Tests ran in an isolated Linux aarch64 workspace, with Node 20, Java 17, Gradle 
 
 ## Activation checklist
 
-1. Build/install the preview APK with a signing key compatible with the intended installation; this code uses version code 3 and version name `2.1.0-agent-preview`.
+1. Build/install the preview APK with a signing key compatible with the intended installation; the single-phone preview uses version code 4 and version name `2.1.1-single-device-preview`.
 2. Disable/re-enable the Accessibility service after updating its window capability; configure the private HTTPS bridge origin and token.
 3. Run `npm ci` and the stdio bridge on the PC, configure the supported MCP tunnel, and install that connection in ChatGPT. This step is separate from the Android relay pairing.
 4. Confirm `wasp_devices` and a fresh `wasp_observe` work from the actual ChatGPT conversation.

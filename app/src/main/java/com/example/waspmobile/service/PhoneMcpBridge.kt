@@ -185,6 +185,8 @@ internal class PhoneMcpBridge(
         private val tokenPattern = Regex("[A-Za-z0-9_-]{32,128}")
         fun savedUrl(context: Context): String = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(URL_KEY, "") ?: ""
+        fun savedDeviceId(context: Context): String = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(DEVICE_ID_KEY, "") ?: ""
         fun save(context: Context, url: String, newToken: String): Boolean {
             val normalized = url.trim().trimEnd('/')
             if (!validHttpsUrl(normalized)) return false

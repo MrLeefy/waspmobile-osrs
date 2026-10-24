@@ -527,7 +527,9 @@ class WaspAccessibilityService : AccessibilityService() {
                 WaspMobileState.log("Switched mode to 📱 Split 2x")
             }
         )
-        for ((tag, clickAction) in modeItems) {
+        // One-device pilot: retain the legacy split mode in source for compatibility,
+        // but do not expose it as a selectable runtime action.
+        for ((tag, clickAction) in modeItems.filterNot { it.first == "📱 Split 2x" }) {
             val chip = makeChip(tag, false) { clickAction() }
             modeChips[tag] = chip
             modeLayout.addView(chip)
@@ -933,6 +935,15 @@ class WaspAccessibilityService : AccessibilityService() {
     }
 
     fun startBotLoop() {
+        if (WaspMobileState.state.value.scriptMode == WaspScriptMode.DUAL_SPLIT_SCREEN) {
+            WaspMobileState.update { it.copy(
+                scriptMode = WaspScriptMode.WOODCUTTER_DROP,
+                statusText = "SINGLE-DEVICE MODE: Split 2x unavailable"
+            ) }
+            WaspMobileState.savePrefs(this)
+            WaspMobileState.log("Split-screen blocked: one OSRS window/character only.")
+            return
+        }
         if (agentPanel?.isEditing == true) {
             WaspMobileState.log("Leave the agent editor before starting a local script.")
             return

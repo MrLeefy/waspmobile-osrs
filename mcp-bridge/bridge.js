@@ -19,6 +19,8 @@ function envConfig(env = process.env) {
     libRoot: path.resolve(env.WASP_LIB_ROOT || 'C:\\Simba\\Includes\\WaspLib'),
     draftRoot: path.resolve(env.WASP_DRAFT_ROOT || 'C:\\Simba\\Scripts\\ai-drafts'),
     simbaExe: path.resolve(env.WASP_SIMBA_EXE || 'C:\\Simba\\Simba.exe'),
+    maxDevices: 1,
+    allowedDeviceId: env.WASP_ALLOWED_DEVICE_ID || '',
     allowCompiler: env.WASP_ALLOW_COMPILER === 'true',
     allowProbe: env.WASP_ALLOW_DESKTOP_PROBE === 'true'};
 }

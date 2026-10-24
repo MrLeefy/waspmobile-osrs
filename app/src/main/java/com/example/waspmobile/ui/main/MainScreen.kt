@@ -240,7 +240,7 @@ fun MainScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                text = "MCP PHONE BRIDGE (EXPERIMENTAL)",
+                text = "MCP PHONE BRIDGE · ONE DEVICE (S23 PILOT)",
                 color = Color(0xFF38BDF8),
                 fontWeight = FontWeight.Bold,
                 fontSize = 14.sp
@@ -253,6 +253,15 @@ fun MainScreen(
                 fontSize = 11.sp
             )
             Text(mcpStatus.message, color = Color(0xFFCBD5E1), fontSize = 11.sp)
+            Text(
+                "One OSRS character and one phone only. Split 2x and Swarm are disabled for this pilot.",
+                color = Color(0xFFFBBF24), fontSize = 11.sp
+            )
+            val pairedId = PhoneMcpBridge.savedDeviceId(context)
+            if (pairedId.isNotEmpty()) Text(
+                "Phone ID for optional PC pinning: $pairedId",
+                color = Color(0xFF94A3B8), fontSize = 10.sp
+            )
             OutlinedTextField(
                 value = mcpUrl,
                 enabled = !mcpEnabled,
@@ -331,7 +340,7 @@ fun MainScreen(
                 fontFamily = FontFamily.Monospace
             )
 
-            WaspScriptMode.entries.forEach { mode ->
+            com.example.waspmobile.engine.SingleCharacterPolicy.selectableModes.forEach { mode ->
                 val selected = telemetry.scriptMode == mode
                 Column(
                     modifier = Modifier

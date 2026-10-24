@@ -42,6 +42,20 @@ enum class WaspScriptMode(val title: String, val shortTag: String, val descripti
     )
 }
 
+/** Scope the first release to one OSRS window/character, retaining the old enum for preference compatibility. */
+internal object SingleCharacterPolicy {
+    val selectableModes: List<WaspScriptMode> =
+        WaspScriptMode.entries.filter { it != WaspScriptMode.DUAL_SPLIT_SCREEN }
+
+    fun normalize(mode: WaspScriptMode): WaspScriptMode =
+        if (mode == WaspScriptMode.DUAL_SPLIT_SCREEN) WaspScriptMode.WOODCUTTER_DROP else mode
+
+    fun next(current: WaspScriptMode): WaspScriptMode {
+        val index = selectableModes.indexOf(normalize(current))
+        return selectableModes[(index + 1) % selectableModes.size]
+    }
+}
+
 private fun packColor(r: Int, g: Int, b: Int): Int =
     (0xFF shl 24) or (r shl 16) or (g shl 8) or b
 
@@ -203,9 +217,10 @@ object WaspMobileState {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
         val savedModeName = prefs.getString("script_mode", WaspScriptMode.WOODCUTTER_DROP.name)
-        val savedMode = runCatching {
+        val rawSavedMode = runCatching {
             WaspScriptMode.valueOf(savedModeName ?: WaspScriptMode.WOODCUTTER_DROP.name)
         }.getOrDefault(WaspScriptMode.WOODCUTTER_DROP)
+        val savedMode = SingleCharacterPolicy.normalize(rawSavedMode)
 
         val savedPresetName = prefs.getString("color_preset", TargetColorPreset.TREE_CANOPY.name)
         val savedPreset = runCatching {
@@ -227,7 +242,7 @@ object WaspMobileState {
         var iRight = prefs.getFloat("inv_r", 0.901f).coerceIn(iLeft + 0.06f, 0.99f)
         var iBottom = prefs.getFloat("inv_b", 0.975f).coerceIn(iTop + 0.08f, 0.99f)
 
-        var migrated = false
+        var migrated = rawSavedMode != savedMode
         if (abs(iTop - 0.24f) < 0.005f) {
             iLeft = 0.731f
             iTop = 0.468f
@@ -306,9 +321,7 @@ object WaspMobileState {
     fun cycleScriptMode(): WaspScriptMode {
         var newMode = WaspScriptMode.WOODCUTTER_DROP
         _state.update { current ->
-            val modes = WaspScriptMode.entries
-            val nextIdx = (current.scriptMode.ordinal + 1) % modes.size
-            newMode = modes[nextIdx]
+            newMode = SingleCharacterPolicy.next(current.scriptMode)
             current.copy(scriptMode = newMode)
         }
         savePrefs()

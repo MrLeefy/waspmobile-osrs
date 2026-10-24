@@ -2,6 +2,12 @@
 
 **Status: draft, not production-complete.** The new [Agent Desk and mobile executor](DASHBOARD.md) are implemented; see `dashboard-results.json` for current checks and [AUDIT.md](AUDIT.md) for the preceding audit. This is not a connected ChatGPT session merely because the code exists in GitHub.
 
+## One-phone first
+
+**This is a single S23 / one foreground OSRS window pilot, not a mobile Swarm.** See [ONE_PHONE_PILOT.md](ONE_PHONE_PILOT.md). The bridge pins the first authenticated phone for its process lifetime; a different phone cannot replace it merely by waiting for the heartbeat to expire. Optionally set `WASP_ALLOWED_DEVICE_ID` to the Phone ID displayed in the Android app to persist that restriction across bridge restarts. A second simultaneous consent session cannot take over an online phone; disconnect locally or allow the old heartbeat to expire.
+
+The old split-screen menu is unavailable during this pilot. No separate Swarm server files are modified or deployed.
+
 ## What this implements
 
 - ChatGPT-compatible MCP over **stdio**, using the official, pinned MCP TypeScript SDK.
