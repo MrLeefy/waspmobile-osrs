@@ -5,6 +5,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { validatePolicy, createNextGoal, isCompletedForGoal } = require('./planner');
 
 const PORT = Number(process.env.CONTROL_PORT || 7788);
 const HOST = process.env.CONTROL_HOST || '127.0.0.1';
@@ -150,9 +151,23 @@ async function handler(req, res) {
         if (currentlyConnected >= MAX_CONNECTED_WORKERS) return error(res, 429, 'Concurrent worker limit reached; raise CONTROL_MAX_CONNECTED_WORKERS after capacity testing');
       }
       if (data.screenshot) readScreenshot(data.screenshot, id);
-      telemetry.set(id, { receivedAt: Date.now(), telemetry: data.telemetry ? validateTelemetry(data.telemetry) : null,
-        supervisor: sanitizeSupervisor(data.supervisor) });
-      return json(res, 200, { ok: true, goal: state.accounts[id].goal || null });
+      const cleaned = data.telemetry ? validateTelemetry(data.telemetry) : null;
+      telemetry.set(id, { receivedAt: Date.now(), telemetry: cleaned, supervisor: sanitizeSupervisor(data.supervisor) });
+      const account = state.accounts[id];
+      if (account.autopilot?.enabled && isCompletedForGoal(cleaned, account.goal)) {
+        if (cleaned.state.includes('MAX_LEVEL')) {
+          account.autopilot.enabled = false; // Respect the configured level ceiling.
+          account.lastCompletion = { goalId: account.goal.id, result: 'target-level-reached', at: new Date().toISOString() };
+        } else {
+          const previous = account.goal;
+          const next = createNextGoal(account.autopilot, previous);
+          account.goal = next.goal;
+          account.autopilot = next.policy;
+          account.lastCompletion = { goalId: previous.id, result: 'session-complete', at: new Date().toISOString() };
+        }
+        persist();
+      }
+      return json(res, 200, { ok: true, goal: account.goal || null });
     }
     if (pathname === '/api/worker/next' && req.method === 'GET') {
       return json(res, 200, { command: state.commands[id]?.status === 'pending' ? state.commands[id] : null, goal: state.accounts[id].goal || null });
@@ -183,7 +198,7 @@ async function handler(req, res) {
     persist();
     return json(res, 201, { account: accountView(id, state.accounts[id]), workerToken: generatedToken, warning: 'Copy this worker token now: it is returned only once.' });
   }
-  const match = pathname.match(/^\/api\/accounts\/([a-z0-9_-]{1,32})(?:\/(goal|proposal|approve|command|screenshot|rotate-token))?$/);
+  const match = pathname.match(/^\/api\/accounts\/([a-z0-9_-]{1,32})(?:\/(goal|proposal|approve|command|screenshot|rotate-token|autopilot))?$/);
   if (!match || !validAccount(match[1])) return error(res, 404, 'Account not found');
   const [, id, action] = match;
   if (action === 'screenshot' && req.method === 'GET') {
@@ -209,9 +224,23 @@ async function handler(req, res) {
     persist();
     return json(res, 200, { removed: id, warning: 'Profile removed; any external game process must be stopped separately.' });
   }
+  if (action === 'autopilot' && req.method === 'POST') {
+    let policy;
+    try { policy = validatePolicy(await body(req)); }
+    catch (err) { return error(res, 400, err.message); }
+    state.accounts[id].autopilot = policy;
+    if (policy.enabled) {
+      const next = createNextGoal(policy, null);
+      state.accounts[id].goal = next.goal;
+      state.accounts[id].autopilot = next.policy;
+    }
+    persist();
+    return json(res, 200, { autopilot: state.accounts[id].autopilot, goal: state.accounts[id].goal });
+  }
   if (action === 'goal' && req.method === 'POST') {
     const requested = goalPayload(await body(req));
     state.accounts[id].goal = { id: crypto.randomUUID(), ...requested, status: 'pending-script-integration', savedAt: new Date().toISOString() };
+    if (state.accounts[id].autopilot) state.accounts[id].autopilot.enabled = false;
     delete state.proposals[id];
     persist();
     return json(res, 200, { goal: state.accounts[id].goal });
@@ -226,6 +255,7 @@ async function handler(req, res) {
     const proposed = state.proposals[id];
     if (!proposed) return error(res, 404, 'No proposed goal awaiting approval');
     state.accounts[id].goal = { ...proposed, status: 'pending-script-integration', approvedAt: new Date().toISOString() };
+    if (state.accounts[id].autopilot) state.accounts[id].autopilot.enabled = false;
     delete state.proposals[id];
     persist();
     return json(res, 200, { goal: state.accounts[id].goal });
@@ -235,6 +265,7 @@ async function handler(req, res) {
     if (!COMMANDS.has(data.command)) return error(res, 400, 'Unsupported command');
     if (state.commands[id]?.status === 'pending') return error(res, 409, 'Another command is awaiting delivery');
     state.commands[id] = { id: crypto.randomUUID(), command: data.command, status: 'pending', queuedAt: new Date().toISOString() };
+    if (data.command === 'LOGOUT_STOP' && state.accounts[id].autopilot) state.accounts[id].autopilot.enabled = false;
     persist();
     return json(res, 202, { command: state.commands[id], note: 'Queued for the worker; not an execution confirmation' });
   }
