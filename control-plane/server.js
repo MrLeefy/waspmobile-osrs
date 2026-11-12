@@ -132,12 +132,14 @@ async function handler(req, res) {
     const id = req.headers['x-account-id'];
     if (typeof id !== 'string' || !validAccount(id) || !authentication(req, 'worker', id)) return error(res, 401, 'Invalid worker credentials');
     if (pathname === '/api/worker/heartbeat' && req.method === 'POST') {
+      const data = await body(req);
+      // Admission is checked AFTER parsing and immediately before setting the live session.
+      // No await occurs between check and reservation, avoiding concurrent first-heartbeat races.
       const alreadyConnected = telemetry.has(id) && Date.now() - telemetry.get(id).receivedAt <= LIVE_FOR_MS;
       if (!alreadyConnected) {
         const currentlyConnected = [...telemetry.values()].filter(t => Date.now() - t.receivedAt <= LIVE_FOR_MS).length;
         if (currentlyConnected >= MAX_CONNECTED_WORKERS) return error(res, 429, 'Concurrent worker limit reached; raise CONTROL_MAX_CONNECTED_WORKERS after capacity testing');
       }
-      const data = await body(req);
       if (data.screenshot) readScreenshot(data.screenshot, id);
       telemetry.set(id, { receivedAt: Date.now(), telemetry: data.telemetry ? validateTelemetry(data.telemetry) : null });
       return json(res, 200, { ok: true, goal: state.accounts[id].goal || null });
