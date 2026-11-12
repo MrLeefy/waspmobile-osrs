@@ -763,7 +763,7 @@ end;
 procedure TMasterDirector.Run();
 var
   state: EDirectorState;
-  waitStarted: UInt64;
+  nextGoalTimer: TCountDown;
   finishedGoal: String;
 begin
   Self.Init();
@@ -879,9 +879,9 @@ begin
              ((Self.BlockTimer.IsFinished) or (state = EDirectorState.MAX_LEVEL)) then
           begin
             finishedGoal := Self.RemoteGoalId;
-            waitStarted := Time();
+            nextGoalTimer.Start(120 * SECOND);
             Logger.Info('[Control Plane] Session complete, awaiting next goal...');
-            while (Self.RemoteGoalId = finishedGoal) and (Time() - waitStarted < 120) do
+            while (Self.RemoteGoalId = finishedGoal) and (not nextGoalTimer.IsFinished) do
             begin
               Sleep(1000);
               Self.ApplyRemoteGoal();
