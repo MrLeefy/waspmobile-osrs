@@ -10,7 +10,7 @@ const BOT_ID = process.env.WASP_BOT_ID || '';
 const ACCOUNT_ID = process.env.CONTROL_ACCOUNT_ID || BOT_ID;
 const SERVER = (process.env.CONTROL_URL || '').replace(/\/+$/, '');
 const TOKEN = process.env.CONTROL_WORKER_TOKEN || '';
-const ALLOWED_COMMANDS = new Set(['PAUSE', 'RESUME', 'HOP', 'LOGOUT_STOP']);
+const ALLOWED_COMMANDS = new Set(['START', 'PAUSE', 'RESUME', 'HOP', 'LOGOUT_STOP']);
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const TICK_MS = 5000;
 let lastScreenMtime = 0;
@@ -28,6 +28,9 @@ const teleFile = path.join(BASE, 'telemetry', BOT_ID + '.json');
 const screenFile = path.join(BASE, 'telemetry', BOT_ID + '.png');
 const cmdFile = path.join(BASE, 'commands', BOT_ID + '.cmd');
 const goalFile = path.join(BASE, 'goals', BOT_ID + '.json');
+const simbaGoalFile = path.join(BASE, 'goals', BOT_ID + '.goal');
+const supervisorFile = path.join(BASE, 'status', BOT_ID + '.json');
+const supervisorCommandDir = path.join(BASE, 'supervisor');
 
 async function request(route, payload) {
   const response = await fetch(SERVER + route, {
@@ -60,20 +63,34 @@ function screenshot() {
   } catch { return null; }
 }
 function saveGoal(goal) {
-  if (!goal || typeof goal.id !== 'string') return;
+  if (!goal || typeof goal.id !== 'string' || !['woodcutting','mining'].includes(goal.skill) ||
+      !['bank','power_drop'].includes(goal.mode) || !Number.isInteger(goal.durationMinutes) ||
+      goal.durationMinutes < 5 || goal.durationMinutes > 180 ||
+      (goal.targetLevel !== null && goal.targetLevel !== undefined &&
+       (!Number.isInteger(goal.targetLevel) || goal.targetLevel < 1 || goal.targetLevel > 99))) return;
   fs.mkdirSync(path.dirname(goalFile), { recursive: true });
   let old;
   try { old = JSON.parse(fs.readFileSync(goalFile, 'utf8')); } catch {}
-  if (old?.id === goal.id) return;
-  // This is a goal handoff only, NOT proof the Simba script changed activity.
+  if (old?.id === goal.id && fs.existsSync(simbaGoalFile)) return;
   const next = goalFile + '.tmp';
   fs.writeFileSync(next, JSON.stringify(goal, null, 2));
   fs.renameSync(next, goalFile);
-  console.log('Goal recorded for script integration: ' + goal.skill + ' (' + goal.id + ')');
+  const line = [goal.id, goal.skill, goal.mode, String(goal.durationMinutes), String(goal.targetLevel || 0)].join('|') + '\n';
+  const nativeTmp = simbaGoalFile + '.tmp';
+  fs.writeFileSync(nativeTmp, line);
+  fs.renameSync(nativeTmp, simbaGoalFile);
+  console.log('Goal handed to local Simba director: ' + goal.skill + ' (' + goal.id + ')');
+}
+function readSupervisor() {
+  try {
+    const stat = fs.statSync(supervisorFile);
+    if (Date.now() - stat.mtimeMs > 90000) return null;
+    return JSON.parse(fs.readFileSync(supervisorFile, 'utf8'));
+  } catch { return null; }
 }
 async function heartbeat() {
   const screen = screenshot();
-  const payload = { telemetry: readTelemetry() };
+  const payload = { telemetry: readTelemetry(), supervisor: readSupervisor() };
   if (screen) payload.screenshot = screen.base64;
   const response = await request('/api/worker/heartbeat', payload);
   if (screen) lastScreenMtime = screen.mtime;
@@ -86,6 +103,17 @@ async function pollCommand() {
   const cmd = response.command;
   if (!cmd || !ALLOWED_COMMANDS.has(cmd.command)) return;
   fs.mkdirSync(path.dirname(cmdFile), { recursive: true });
+  fs.mkdirSync(supervisorCommandDir, { recursive: true });
+  // START only wakes the local supervisor; it never injects arbitrary OS commands.
+  if (cmd.command === 'START') {
+    fs.writeFileSync(path.join(supervisorCommandDir, BOT_ID + '.start'), 'START\n');
+    await request('/api/worker/ack', { id: cmd.id, delivered: true, note: 'Local supervisor start request written; launch not confirmed' });
+    return;
+  }
+  if (cmd.command === 'LOGOUT_STOP')
+    fs.writeFileSync(path.join(supervisorCommandDir, BOT_ID + '.stop'), 'STOP\n');
+  if (cmd.command === 'RESUME')
+    fs.writeFileSync(path.join(supervisorCommandDir, BOT_ID + '.start'), 'START\n');
   let note;
   try {
     // Preserve existing command. Never overwrite an instruction Simba has not read.
