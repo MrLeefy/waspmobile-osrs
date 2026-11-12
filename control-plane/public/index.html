@@ -80,6 +80,7 @@ small{font-size:12px;color:var(--dim)}.pill{display:inline-flex;font-size:11px;p
     html+='<div class="metric"><span>Inventory</span><span>'+escapeHTML(tel&&tel.invCount!=null?tel.invCount:'—')+'/28</span></div>';
     html+='<div class="metric"><span>Run energy</span><span>'+escapeHTML(tel&&tel.runEnergy!=null?tel.runEnergy+'%':'—')+'</span></div>';
     html+='<div class="metric"><span>Bridge heartbeat</span><span>'+escapeHTML(a.telemetryAgeSeconds==null?'Never':a.telemetryAgeSeconds+'s ago')+'</span></div>';
+    html+='<div class="metric"><span>Local launcher</span><span>'+escapeHTML(a.supervisor&&a.supervisor.workerSupervisor?a.supervisor.workerSupervisor:'Not configured / offline')+'</span></div>';
     html+='<div class="line"></div><h3>Latest screenshot</h3>'+screen+'<p class="sub">This is a captured image, not a live video stream.</p>';
     html+='<div class="line"></div><h3>Skilling goal</h3><form class="goalForm stack">';
     html+='<div class="fields"><div><label>Skill</label><select name="skill"><option value="woodcutting">Woodcutting</option><option value="mining">Mining</option></select></div>';
@@ -88,7 +89,7 @@ small{font-size:12px;color:var(--dim)}.pill{display:inline-flex;font-size:11px;p
     html+='<div><label>Target level (optional)</label><input name="targetLevel" type="number" min="1" max="99" placeholder="—"></div></div>';
     html+='<button class="primary" type="submit">Save goal</button></form>';
     html+='<p class="sub">'+(a.goal?'Planned: '+escapeHTML(current.skill)+' · '+escapeHTML(current.status):'No goal saved')+'</p>';
-    html+='<div class="actions"><button data-cmd="PAUSE">Pause</button><button data-cmd="RESUME">Resume</button><button data-cmd="HOP">World hop</button><button data-cmd="LOGOUT_STOP">Stop</button></div>';
+    html+='<div class="actions"><button class="primary" data-cmd="START">Start</button><button data-cmd="PAUSE">Pause</button><button data-cmd="RESUME">Resume</button><button data-cmd="HOP">World hop</button><button data-cmd="LOGOUT_STOP">Stop</button></div>';
     html+='<p class="sub">Command: '+escapeHTML(a.command?a.command.command+' · '+a.command.status:'none')+'</p>';
     html+='<div class="actions"><button class="rotate">Rotate worker token</button><button class="remove">Remove profile</button></div>';
     if(a.proposal){html+='<p class="sub">AI proposal: '+escapeHTML(a.proposal.skill)+' ('+escapeHTML(a.proposal.durationMinutes)+' min)</p><button class="primary approve">Approve proposed goal</button>'}
