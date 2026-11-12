@@ -1,0 +1,37 @@
+{
+  "description": "LOCAL TEMPLATE. Verify your exact Simba launch arguments before enabling autoLaunch.",
+  "accounts": [
+    {
+      "id": "account-one",
+      "swarmDir": "C:\\Simba\\Swarm",
+      "autoLaunch": false,
+      "restartOnFailure": false,
+      "launchers": {
+        "woodcutting": {
+          "executable": "C:\\REPLACE\\SIMBA.exe",
+          "args": []
+        },
+        "mining": {
+          "executable": "C:\\REPLACE\\SIMBA.exe",
+          "args": []
+        }
+      }
+    },
+    {
+      "id": "account-two",
+      "swarmDir": "C:\\Simba\\Swarm",
+      "autoLaunch": false,
+      "restartOnFailure": false,
+      "launchers": {
+        "woodcutting": {
+          "executable": "C:\\REPLACE\\SIMBA.exe",
+          "args": []
+        },
+        "mining": {
+          "executable": "C:\\REPLACE\\SIMBA.exe",
+          "args": []
+        }
+      }
+    }
+  ]
+}
