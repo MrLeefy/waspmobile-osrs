@@ -51,6 +51,13 @@ async function main() {
     assert.equal(JSON.stringify(listing.data).includes('workerTokenHash'), false); tests++;
     assert.equal((await req('POST', '/api/accounts', {id:'account-0'})).status, 409); tests++;
     assert.equal((await req('POST', '/api/accounts', null)).status, 400); tests++;
+    const oldToken = tokens.get('account-5');
+    const rotated = await req('POST','/api/accounts/account-5/rotate-token',{});
+    assert.equal(rotated.status,200); tests++;
+    assert.notEqual(rotated.data.workerToken,oldToken); tests++;
+    assert.equal((await req('GET','/api/worker/next',undefined,'worker','account-5')).status,401); tests++;
+    tokens.set('account-5',rotated.data.workerToken);
+    assert.equal((await req('GET','/api/worker/next',undefined,'worker','account-5')).status,200); tests++;
 
     const goal = {skill:'woodcutting',mode:'bank',durationMinutes:35,targetLevel:22};
     assert.equal((await req('POST','/api/accounts/account-0/goal',goal)).status,200); tests++;
@@ -64,6 +71,7 @@ async function main() {
       const hb=await req('POST','/api/worker/heartbeat',{telemetry:{rsn:'Name'+i,loggedIn:true,script:'woodcutting',invCount:17}},'worker',id);
       assert.equal(hb.status,200); tests++;
     }
+    assert.equal((await req('DELETE','/api/accounts/account-0',{})).status,409); tests++;
     const third=await req('POST','/api/worker/heartbeat',{telemetry:{loggedIn:true}},'worker','account-2');
     assert.equal(third.status,429); tests++;
     const status=await req('GET','/api/accounts');
@@ -127,7 +135,10 @@ async function main() {
       assert.equal(screenshotRes.headers.get('content-type'),'image/png'); tests++;
     } finally { worker.kill('SIGTERM'); }
 
-    console.log('PASS: '+tests+' checks, six registered accounts, two admitted workers, isolated credentials and command queue and outbound worker bridge.');
+    assert.equal((await req('DELETE','/api/accounts/account-5',{})).status,200); tests++;
+    assert.equal((await req('GET','/api/accounts')).data.registeredCount,5); tests++;
+    assert.equal((await req('GET','/api/worker/next',undefined,'worker','account-5')).status,401); tests++;
+    console.log('PASS: '+tests+' checks, six provisioned accounts, two admitted workers, isolated credentials, token rotation, guarded removal and outbound worker bridge.');
   } finally {
     await new Promise(resolve=>server.close(resolve));
     fs.rmSync(dir,{recursive:true,force:true});
