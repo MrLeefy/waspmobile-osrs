@@ -90,6 +90,7 @@ small{font-size:12px;color:var(--dim)}.pill{display:inline-flex;font-size:11px;p
     html+='<p class="sub">'+(a.goal?'Planned: '+escapeHTML(current.skill)+' · '+escapeHTML(current.status):'No goal saved')+'</p>';
     html+='<div class="actions"><button data-cmd="PAUSE">Pause</button><button data-cmd="RESUME">Resume</button><button data-cmd="HOP">World hop</button><button data-cmd="LOGOUT_STOP">Stop</button></div>';
     html+='<p class="sub">Command: '+escapeHTML(a.command?a.command.command+' · '+a.command.status:'none')+'</p>';
+    html+='<div class="actions"><button class="rotate">Rotate worker token</button><button class="remove">Remove profile</button></div>';
     if(a.proposal){html+='<p class="sub">AI proposal: '+escapeHTML(a.proposal.skill)+' ('+escapeHTML(a.proposal.durationMinutes)+' min)</p><button class="primary approve">Approve proposed goal</button>'}
     var elem=document.createElement('article');elem.className='account';elem.innerHTML=html;
     var form=elem.querySelector('.goalForm');
@@ -105,6 +106,22 @@ small{font-size:12px;color:var(--dim)}.pill{display:inline-flex;font-size:11px;p
       if(command==='LOGOUT_STOP'&&!confirm('Queue logout/stop for '+a.label+'?'))return;
       try{await api('/api/accounts/'+a.id+'/command','POST',{command:command});notify(command+' queued; not yet confirmed executed');await refresh()}catch(e){notify(e.message,true)}
     })});
+    elem.querySelector('.rotate').addEventListener('click',async function(){
+      if(!confirm('Rotate worker token for '+a.label+'? The currently configured worker token will stop working.'))return;
+      try{
+        var data=await api('/api/accounts/'+a.id+'/rotate-token','POST',{});
+        by('secretValue').textContent=data.workerToken;
+        by('secretBox').classList.remove('hide');
+        by('secretBox').scrollIntoView({behavior:'smooth',block:'start'});
+        notify('Token rotated for '+a.label+'. Copy the new secret and update the worker.');
+        await refresh();
+      }catch(e){notify(e.message,true)}
+    });
+    elem.querySelector('.remove').addEventListener('click',async function(){
+      if(!confirm('Permanently remove '+a.label+' from the dashboard? This does not stop any game client. Stop the worker first.'))return;
+      try{await api('/api/accounts/'+a.id,'DELETE',{});notify('Account profile removed from dashboard');await refresh()}
+      catch(e){notify(e.message,true)}
+    });
     var approval=elem.querySelector('.approve');
     if(approval)approval.addEventListener('click',async function(){try{await api('/api/accounts/'+a.id+'/approve','POST',{});notify('Goal approved, awaiting script integration');await refresh()}catch(e){notify(e.message,true)}});
     if(a.screenshotAvailable)screenFetch(a.id,elem.querySelector('.placeholder'));
