@@ -140,6 +140,22 @@ function createSupervisor(config, options = {}) {
 
   function tick() {
     for (const c of controllers.values()) {
+      const supervisorDir = path.join(c.acc.swarmDir, 'supervisor');
+      const stopFlag = path.join(supervisorDir, c.acc.id + '.stop');
+      const startFlag = path.join(supervisorDir, c.acc.id + '.start');
+      if (fs.existsSync(startFlag)) {
+        fs.unlinkSync(startFlag);
+        try { fs.unlinkSync(stopFlag); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+        // Explicit START re-arms an account previously stopped by its operator.
+        c.goalId = null;
+        c.restartHistory = [];
+        c.nextRetryAt = 0;
+      }
+      if (fs.existsSync(stopFlag)) {
+        if (c.process && c.state !== 'stopping') terminate(c);
+        if (!c.process && c.state !== 'manual-stop') { c.state = 'manual-stop'; publish(c); }
+        continue;
+      }
       if (c.state === 'stopping' && c.process && clock() >= c.stopAt) {
         try { c.process.kill('SIGTERM'); } catch {}
         c.stopAt = clock() + 60000; // do not spin on repeated kill
@@ -154,7 +170,7 @@ function createSupervisor(config, options = {}) {
         terminate(c);
         continue;
       }
-      if (c.process) continue;
+      if (c.process || c.state === 'stopping') continue;
       if (c.goalId !== goal.id) {
         c.restartHistory = []; c.nextRetryAt = 0; launch(c, goal);
       } else if (c.state === 'exited' && c.acc.restartOnFailure === true && clock() >= c.nextRetryAt) {
@@ -164,7 +180,10 @@ function createSupervisor(config, options = {}) {
   }
   function stop() {
     stopping = true;
-    for (const c of controllers.values()) terminate(c);
+    for (const c of controllers.values()) {
+      if (c.process) terminate(c);
+      else { c.state = 'stopped'; publish(c); }
+    }
   }
   return { tick, stop, controllers, getGoal: id => getGoal(controllers.get(id).acc) };
 }
