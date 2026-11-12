@@ -763,6 +763,8 @@ end;
 procedure TMasterDirector.Run();
 var
   state: EDirectorState;
+  waitStarted: UInt64;
+  finishedGoal: String;
 begin
   Self.Init();
 
@@ -771,7 +773,10 @@ begin
     state := Self.GetState();
     Logger.Info('Director: ' + ToStr(Self.CurrentBlock) + ' -> ' + ToStr(state) +
                 ' | Attention: ' + ToStr(Human.Attention));
-    Human.SyncSwarm('Master Director', ToStr(Self.CurrentBlock).After('EDirectorBlock.') + ' -> ' + ToStr(state).After('EDirectorState.'), Self.Actions);
+    if Self.RemoteGoalActive then
+      Human.SyncSwarm('Master Director', Self.RemoteGoalId + '|' + ToStr(Self.CurrentBlock).After('EDirectorBlock.') + ' -> ' + ToStr(state).After('EDirectorState.'), Self.Actions)
+    else
+      Human.SyncSwarm('Master Director', ToStr(Self.CurrentBlock).After('EDirectorBlock.') + ' -> ' + ToStr(state).After('EDirectorState.'), Self.Actions);
     if Self.CurrentBlock = EDirectorBlock.BLOCK_MINING_AND_GEMS then
       Human.CheckAndReplyChat('mining')
     else
@@ -866,8 +871,29 @@ begin
           Minimap.EnableSpecial(100);
         end;
 
+      EDirectorState.MAX_TIME, EDirectorState.MAX_LEVEL:
+        begin
+          // Report goal completion, then allow the controller to dispatch the next
+          // validated plan. Keep Simba running rather than requiring GUI restart.
+          if Self.RemoteGoalActive and
+             ((Self.BlockTimer.IsFinished) or (state = EDirectorState.MAX_LEVEL)) then
+          begin
+            finishedGoal := Self.RemoteGoalId;
+            waitStarted := Time();
+            Logger.Info('[Control Plane] Session complete, awaiting next goal...');
+            while (Self.RemoteGoalId = finishedGoal) and (Time() - waitStarted < 120) do
+            begin
+              Sleep(1000);
+              Self.ApplyRemoteGoal();
+            end;
+            if Self.RemoteGoalId = finishedGoal then
+              Break;
+          end
+          else
+            Break;
+        end;
+
       EDirectorState.NO_ACTIVITY, EDirectorState.MAX_ACTIONS,
-      EDirectorState.MAX_TIME, EDirectorState.MAX_LEVEL,
       EDirectorState.END_SCRIPT:
         Break;
     end;
