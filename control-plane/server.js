@@ -25,7 +25,7 @@ function secureEquals(actual, expected) {
 function authentication(req, type, accountId) {
   const got = req.headers[type === 'admin' ? 'x-admin-token' : 'x-worker-token'];
   const account = state?.accounts?.[accountId];
-  const legacy = WORKER_TOKENS[accountId];
+  const legacy = account?.workerTokenHash ? null : WORKER_TOKENS[accountId];
   const expected = type === 'admin' ? ADMIN_TOKEN : legacy || account?.workerTokenHash;
   if (typeof got !== 'string' || !expected) return false;
   return type === 'worker' && !legacy
@@ -173,7 +173,7 @@ async function handler(req, res) {
     persist();
     return json(res, 201, { account: accountView(id, state.accounts[id]), workerToken: generatedToken, warning: 'Copy this worker token now: it is returned only once.' });
   }
-  const match = pathname.match(/^\/api\/accounts\/([a-z0-9_-]{1,32})(?:\/(goal|proposal|approve|command|screenshot))?$/);
+  const match = pathname.match(/^\/api\/accounts\/([a-z0-9_-]{1,32})(?:\/(goal|proposal|approve|command|screenshot|rotate-token))?$/);
   if (!match || !validAccount(match[1])) return error(res, 404, 'Account not found');
   const [, id, action] = match;
   if (action === 'screenshot' && req.method === 'GET') {
@@ -181,6 +181,22 @@ async function handler(req, res) {
     if (!fs.existsSync(file)) return error(res, 404, 'No real screenshot received');
     res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     return fs.createReadStream(file).pipe(res);
+  }
+  if (action === 'rotate-token' && req.method === 'POST') {
+    const rotatedToken = crypto.randomBytes(32).toString('hex');
+    state.accounts[id].workerTokenHash = crypto.createHash('sha256').update(rotatedToken).digest('hex');
+    telemetry.delete(id);
+    persist();
+    return json(res, 200, { workerToken: rotatedToken, warning: 'Previous worker token invalidated. Save the new token now.' });
+  }
+  if (!action && req.method === 'DELETE') {
+    // Administrative profile removal does NOT stop an already-running external game.
+    delete state.accounts[id]; delete state.commands[id]; delete state.proposals[id];
+    telemetry.delete(id);
+    const image = path.join(DATA_DIR, id + '.png');
+    try { fs.unlinkSync(image); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+    persist();
+    return json(res, 200, { removed: id, warning: 'Profile removed; any external game process must be stopped separately.' });
   }
   if (action === 'goal' && req.method === 'POST') {
     const requested = goalPayload(await body(req));
