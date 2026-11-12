@@ -13,6 +13,10 @@ if ! id -u waspmobile >/dev/null 2>&1; then
   useradd --system --no-create-home --shell /sbin/nologin waspmobile
 fi
 install -d -m 0700 -o waspmobile -g waspmobile /var/lib/wasp-mobile-control
+# Oracle root sessions may use umask 077. Make code readable without exposing state.
+chmod 0755 /opt/wasp-mobile-control/current
+find "$BASE/control-plane" -type d -exec chmod 0755 {} +
+find "$BASE/control-plane" -type f -exec chmod 0644 {} +
 if [[ ! -e /etc/wasp-mobile-control.env ]]; then
   umask 077
   TOKEN="$(openssl rand -hex 32)"
