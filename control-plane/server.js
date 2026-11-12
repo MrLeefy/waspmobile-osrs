@@ -190,6 +190,7 @@ async function handler(req, res) {
     return json(res, 200, { workerToken: rotatedToken, warning: 'Previous worker token invalidated. Save the new token now.' });
   }
   if (!action && req.method === 'DELETE') {
+    if (telemetry.has(id) && Date.now() - telemetry.get(id).receivedAt <= LIVE_FOR_MS) return error(res, 409, 'Worker is still connected; stop the worker before removing this profile');
     // Administrative profile removal does NOT stop an already-running external game.
     delete state.accounts[id]; delete state.commands[id]; delete state.proposals[id];
     telemetry.delete(id);
