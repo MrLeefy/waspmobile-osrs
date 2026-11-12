@@ -19,7 +19,7 @@ if [[ ! -e /etc/wasp-mobile-control.env ]]; then
   {
     printf 'CONTROL_ADMIN_TOKEN=%s\n' "$TOKEN"
     printf 'CONTROL_HOST=127.0.0.1\n'
-    printf 'CONTROL_PORT=7790\n'
+    printf 'CONTROL_PORT=7792\n'
     printf 'CONTROL_DATA_DIR=/var/lib/wasp-mobile-control\n'
     printf 'CONTROL_MAX_CONNECTED_WORKERS=2\n'
   } > /etc/wasp-mobile-control.env
@@ -29,6 +29,6 @@ fi
 install -m 0644 "$BASE/control-plane/deploy/wasp-mobile-control.service" /etc/systemd/system/wasp-mobile-control.service
 systemctl daemon-reload
 systemctl enable --now wasp-mobile-control.service
-curl --fail --silent --show-error --max-time 3 http://127.0.0.1:7790/healthz >/dev/null
-echo "Wasp Mobile controller ready privately on localhost:7790."
+curl --fail --silent --show-error --max-time 3 http://127.0.0.1:7792/healthz >/dev/null
+echo "Wasp Mobile controller ready privately on localhost:7792."
 echo "Existing wasp-osrs-bridge untouched; admin secret stored in /etc/wasp-mobile-control.env."
