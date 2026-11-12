@@ -1,5 +1,7 @@
 # WaspMobile OSRS Overlay & Biometric Swarm Ecosystem (v6)
 
+> **New (development preview):** [Wasp Mobile Remote Control Plane](control-plane/README.md) — mobile-first scalable account registry, two-worker starting cap, one-time credentials, telemetry, skilling goals and a tested outbound desktop worker bridge. This is not a live game launcher yet.
+
 A human-biometric automation and computer-vision overlay ecosystem for **Old School RuneScape (OSRS)** across **Android (`WaspMobile`)**, **Desktop (`Simba 2.0 + WaspLib`)**, and a **Mobile PWA Swarm Command Center (`Swarm`)**.
 
 ---
