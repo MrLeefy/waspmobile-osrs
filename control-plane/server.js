@@ -58,8 +58,8 @@ async function body(req) {
     text += chunk;
     if (Buffer.byteLength(text) > 1500000) throw Object.assign(new Error('Request too large'), { status: 413 });
   }
-  try { return text ? JSON.parse(text) : {}; }
-  catch { throw Object.assign(new Error('Invalid JSON'), { status: 400 }); }
+  try { const result = text ? JSON.parse(text) : {}; if (!result || typeof result !== 'object' || Array.isArray(result)) throw Error('Expected JSON object'); return result; }
+  catch { throw Object.assign(new Error('Invalid JSON object'), { status: 400 }); }
 }
 function goalPayload(value) {
   if (!value || typeof value !== 'object' || !SKILLS.has(value.skill)) throw Object.assign(new Error('Skill must be woodcutting or mining'), { status: 400 });
@@ -115,6 +115,18 @@ async function handler(req, res) {
   if (req.method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
     return fs.createReadStream(path.join(__dirname, 'public', 'index.html')).pipe(res);
+  }
+  if (req.method === 'GET' && pathname === '/manifest.webmanifest') {
+    res.writeHead(200, { 'Content-Type': 'application/manifest+json; charset=utf-8', 'Cache-Control': 'no-store' });
+    return fs.createReadStream(path.join(__dirname, 'public', 'manifest.webmanifest')).pipe(res);
+  }
+  if (req.method === 'GET' && pathname === '/sw.js') {
+    res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'Service-Worker-Allowed': '/' });
+    return fs.createReadStream(path.join(__dirname, 'public', 'sw.js')).pipe(res);
+  }
+  if (req.method === 'GET' && pathname === '/icon.svg') {
+    res.writeHead(200, { 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'no-store' });
+    return fs.createReadStream(path.join(__dirname, 'public', 'icon.svg')).pipe(res);
   }
   if (pathname.startsWith('/api/worker/')) {
     const id = req.headers['x-account-id'];
