@@ -1,0 +1,19 @@
+{
+  "name": "Wasp Mobile Remote Command Center",
+  "short_name": "Wasp Control",
+  "description": "Private OSRS WaspLib worker monitoring and command center",
+  "id": "/",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0c1522",
+  "theme_color": "#0c1522",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
