@@ -66,11 +66,29 @@ async function main() {
     assert.equal((await req('POST','/api/accounts/account-0/approve',{})).status,200); tests++;
     assert.equal((await req('POST','/api/accounts/account-0/command',{command:'EXEC rm -rf /'})).status,400); tests++;
 
+    const auto = await req('POST','/api/accounts/account-0/autopilot',
+      {enabled:true,skills:['woodcutting','mining'],mode:'bank',sessionMinutes:35,targetLevel:70});
+    assert.equal(auto.status,200); tests++;
+    assert.equal(auto.data.goal.skill,'woodcutting'); tests++;
+    const firstAutoId = auto.data.goal.id;
+    const invalidAuto = await req('POST','/api/accounts/account-0/autopilot',
+      {enabled:true,skills:['random_skill'],mode:'bank',sessionMinutes:35});
+    assert.equal(invalidAuto.status,400); tests++;
     for(let i=0;i<2;i++) {
       const id='account-'+i;
-      const hb=await req('POST','/api/worker/heartbeat',{telemetry:{rsn:'Name'+i,loggedIn:true,script:'woodcutting',invCount:17}},'worker',id);
+      const hb=await req('POST','/api/worker/heartbeat',{telemetry:{rsn:'Name'+i,loggedIn:true,script:'woodcutting',invCount:17,
+        state:i===0?firstAutoId+'|BLOCK_WOODCUT_AND_FLETCH -> MAX_TIME':'GATHER'}},'worker',id);
+      if(i===0){ assert.equal(hb.data.goal.skill,'mining'); tests++; }
       assert.equal(hb.status,200); tests++;
     }
+    const afterRotation = await req('GET','/api/accounts');
+    const secondGoalId = afterRotation.data.accounts[0].goal.id;
+    assert.notEqual(secondGoalId,firstAutoId); tests++;
+    const completedTarget = await req('POST','/api/worker/heartbeat',
+      {telemetry:{rsn:'Name0',loggedIn:true,script:'mining',invCount:17,state:secondGoalId+'|BLOCK_MINING_AND_GEMS -> MAX_LEVEL'}},
+      'worker','account-0');
+    assert.equal(completedTarget.status,200); tests++;
+    assert.equal((await req('GET','/api/accounts')).data.accounts[0].autopilot.enabled,false); tests++;
     assert.equal((await req('DELETE','/api/accounts/account-0',{})).status,409); tests++;
     const third=await req('POST','/api/worker/heartbeat',{telemetry:{loggedIn:true}},'worker','account-2');
     assert.equal(third.status,429); tests++;
@@ -133,12 +151,33 @@ async function main() {
       const screenshotRes=await fetch(base+'/api/accounts/account-0/screenshot',{headers:{'X-Admin-Token':process.env.CONTROL_ADMIN_TOKEN}});
       assert.equal(screenshotRes.status,200); tests++;
       assert.equal(screenshotRes.headers.get('content-type'),'image/png'); tests++;
+      // START and STOP carry local supervisor flags without remote shell execution.
+      const starting = await req('POST','/api/accounts/account-0/command',{command:'START'});
+      assert.equal(starting.status,202); tests++;
+      let seenStart = false;
+      for(let i=0;i<90;i++){
+        if(fs.existsSync(path.join(swarm,'supervisor','account-0.start'))){seenStart=true;break;}
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }
+      assert.equal(seenStart,true); tests++;
+      const latest=await req('GET','/api/accounts');
+      assert.equal(latest.data.accounts[0].command.status,'delivered'); tests++;
+      fs.unlinkSync(path.join(swarm,'commands','account-0.cmd')); // Simulate real Simba consumption.
+      const stopping = await req('POST','/api/accounts/account-0/command',{command:'LOGOUT_STOP'});
+      assert.equal(stopping.status,202); tests++;
+      let seenStop = false;
+      for(let i=0;i<90;i++){
+        if(fs.existsSync(path.join(swarm,'supervisor','account-0.stop'))){seenStop=true;break;}
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }
+      assert.equal(seenStop,true); tests++;
+
     } finally { worker.kill('SIGTERM'); }
 
     assert.equal((await req('DELETE','/api/accounts/account-5',{})).status,200); tests++;
     assert.equal((await req('GET','/api/accounts')).data.registeredCount,5); tests++;
     assert.equal((await req('GET','/api/worker/next',undefined,'worker','account-5')).status,401); tests++;
-    console.log('PASS: '+tests+' checks, six provisioned accounts, two admitted workers, isolated credentials, token rotation, guarded removal and outbound worker bridge.');
+    console.log('PASS: '+tests+' checks including bounded autopilot rotation, worker start/stop flags, six provisioned accounts and two connected workers.');
   } finally {
     await new Promise(resolve=>server.close(resolve));
     fs.rmSync(dir,{recursive:true,force:true});
