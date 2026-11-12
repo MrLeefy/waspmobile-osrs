@@ -1,0 +1,16 @@
+{
+  "description": "COPY to private worker-profiles.json and never commit secrets.",
+  "controllerUrl": "https://YOUR-PRIVATE-CONTROLLER-HOST",
+  "accounts": [
+    {
+      "id": "account-one",
+      "swarmDir": "C:\\Simba\\Swarm",
+      "workerToken": "COPY-ONE-TIME-TOKEN-FROM-DASHBOARD"
+    },
+    {
+      "id": "account-two",
+      "swarmDir": "C:\\Simba\\Swarm",
+      "workerToken": "COPY-A-DIFFERENT-ONE-TIME-TOKEN"
+    }
+  ]
+}
