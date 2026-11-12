@@ -1,0 +1,6 @@
+# Local state for Wasp remote controller
+/data/
+/.env
+/.env.*
+/logs/
+/certs/
