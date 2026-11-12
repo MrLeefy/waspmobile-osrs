@@ -89,6 +89,15 @@ small{font-size:12px;color:var(--dim)}.pill{display:inline-flex;font-size:11px;p
     html+='<div><label>Target level (optional)</label><input name="targetLevel" type="number" min="1" max="99" placeholder="—"></div></div>';
     html+='<button class="primary" type="submit">Save goal</button></form>';
     html+='<p class="sub">'+(a.goal?'Planned: '+escapeHTML(current.skill)+' · '+escapeHTML(current.status):'No goal saved')+'</p>';
+    html+='<div class="line"></div><h3>Autonomous session loop</h3>';
+    html+='<p class="sub">Rule-based rotation. The LLM planner is not connected yet.</p>';
+    html+='<form class="autoForm stack"><div class="fields"><div><label>Skills</label><select name="skills"><option value="woodcutting">Woodcut only</option><option value="mining">Mine only</option><option value="both">Rotate both</option></select></div>';
+    html+='<div><label>Session minutes</label><input name="sessionMinutes" type="number" min="5" max="180" value="60" required></div></div>';
+    html+='<div class="fields"><div><label>Items</label><select name="mode"><option value="bank">Bank</option><option value="power_drop">Power drop</option></select></div>';
+    html+='<div><label>Target level (optional)</label><input name="targetLevel" type="number" min="1" max="99" placeholder="—"></div></div>';
+    html+='<div class="actions"><button class="primary" type="submit">Enable loop</button><button type="button" class="stopAuto">Disable loop</button></div></form>';
+    html+='<p class="sub">Autopilot: '+(a.autopilot&&a.autopilot.enabled?'Enabled':'Disabled')+'</p>';
+
     html+='<div class="actions"><button class="primary" data-cmd="START">Start</button><button data-cmd="PAUSE">Pause</button><button data-cmd="RESUME">Resume</button><button data-cmd="HOP">World hop</button><button data-cmd="LOGOUT_STOP">Stop</button></div>';
     html+='<p class="sub">Command: '+escapeHTML(a.command?a.command.command+' · '+a.command.status:'none')+'</p>';
     html+='<div class="actions"><button class="rotate">Rotate worker token</button><button class="remove">Remove profile</button></div>';
@@ -101,6 +110,35 @@ small{font-size:12px;color:var(--dim)}.pill{display:inline-flex;font-size:11px;p
       ev.preventDefault();
       var f=new FormData(form), payload={skill:f.get('skill'),mode:f.get('mode'),durationMinutes:Number(f.get('durationMinutes')),targetLevel:f.get('targetLevel')||null};
       try{await api('/api/accounts/'+a.id+'/goal','POST',payload);notify('Goal saved. Simba script integration is required to execute it.');await refresh()}catch(e){notify(e.message,true)}
+    });
+    var autoForm=elem.querySelector('.autoForm');
+    var policy=a.autopilot||{};
+    autoForm.elements.skills.value=policy.skills?policy.skills.length===2?'both':policy.skills[0]:'woodcutting';
+    autoForm.elements.sessionMinutes.value=policy.sessionMinutes||60;
+    autoForm.elements.mode.value=policy.mode||'bank';
+    autoForm.elements.targetLevel.value=policy.targetLevel||'';
+    autoForm.addEventListener('submit',async function(ev){
+      ev.preventDefault();
+      var f=new FormData(autoForm);
+      var selector=f.get('skills');
+      var skills=selector==='both'?['woodcutting','mining']:[selector];
+      try{
+        await api('/api/accounts/'+a.id+'/autopilot','POST',
+          {enabled:true,skills:skills,mode:f.get('mode'),sessionMinutes:Number(f.get('sessionMinutes')),
+          targetLevel:f.get('targetLevel')||null});
+        notify('Autonomous goal loop enabled. A local configured worker and real client are still required.');
+        await refresh();
+      }catch(e){notify(e.message,true)}
+    });
+    elem.querySelector('.stopAuto').addEventListener('click',async function(){
+      var f=new FormData(autoForm), selector=f.get('skills');
+      try{
+        await api('/api/accounts/'+a.id+'/autopilot','POST',
+          {enabled:false,skills:selector==='both'?['woodcutting','mining']:[selector],
+          mode:f.get('mode'),sessionMinutes:Number(f.get('sessionMinutes')),targetLevel:f.get('targetLevel')||null});
+        notify('Autonomous goal renewal disabled. Use Stop to end a running session.');
+        await refresh();
+      }catch(e){notify(e.message,true)}
     });
     elem.querySelectorAll('[data-cmd]').forEach(function(btn){btn.addEventListener('click',async function(){
       var command=btn.dataset.cmd;
