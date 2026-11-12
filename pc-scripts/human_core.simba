@@ -1378,7 +1378,11 @@ var
   pos: TPoint;
   paused: Boolean;
 begin
-  if not Self.SwarmSyncTimer.IsFinished then
+  // Terminal goal states must be sent even if the normal four-second sync
+  // window has not elapsed, or autonomous goal rotation could stall.
+  if (not Self.SwarmSyncTimer.IsFinished) and
+     (not stateName.Contains('MAX_TIME')) and
+     (not stateName.Contains('MAX_LEVEL')) then
     Exit;
 
   Self.SwarmSyncTimer.Start(4000);
