@@ -14,7 +14,7 @@ const WORKER_TOKENS = JSON.parse(process.env.CONTROL_WORKER_TOKENS || '{}');
 const MAX_CONNECTED_WORKERS = Math.max(1, Number(process.env.CONTROL_MAX_CONNECTED_WORKERS) || 2);
 const VALID_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const SKILLS = new Set(['woodcutting', 'mining']);
-const COMMANDS = new Set(['PAUSE', 'RESUME', 'HOP', 'LOGOUT_STOP']);
+const COMMANDS = new Set(['START', 'PAUSE', 'RESUME', 'HOP', 'LOGOUT_STOP']);
 const LIVE_FOR_MS = 90000;
 const telemetry = new Map();
 
@@ -81,6 +81,7 @@ function accountView(id, account) {
     telemetryAgeSeconds: age === null ? null : Math.round(age / 1000),
     gameTelemetryFresh: !!live && !!live.telemetry && !!live.telemetry.timestamp && (now - live.telemetry.timestamp <= LIVE_FOR_MS),
     telemetry: live ? live.telemetry : null,
+    supervisor: live ? live.supervisor : null,
     screenshotAvailable: fs.existsSync(path.join(DATA_DIR, id + '.png')),
     command: state.commands[id] || null,
     proposal: state.proposals[id] || null
@@ -100,6 +101,14 @@ function validateTelemetry(source) {
     posX: num(t.posX, 0, 20000), posY: num(t.posY, 0, 20000),
     timestamp: Date.now()
   };
+}
+function sanitizeSupervisor(value) {
+  if (!value || typeof value !== 'object') return null;
+  const text = x => typeof x === 'string' ? x.slice(0, 100) : null;
+  return { workerSupervisor: text(value.workerSupervisor), skill: text(value.skill),
+    goalId: text(value.goalId), pid: Number.isInteger(value.pid) && value.pid > 0 ? value.pid : null,
+    launchCount: Number.isInteger(value.launchCount) && value.launchCount >= 0 ? value.launchCount : null,
+    lastExit: text(value.lastExit) };
 }
 function readScreenshot(encoded, id) {
   if (typeof encoded !== 'string' || encoded.length > 1300000) throw Object.assign(new Error('Invalid screenshot payload'), { status: 400 });
@@ -141,7 +150,8 @@ async function handler(req, res) {
         if (currentlyConnected >= MAX_CONNECTED_WORKERS) return error(res, 429, 'Concurrent worker limit reached; raise CONTROL_MAX_CONNECTED_WORKERS after capacity testing');
       }
       if (data.screenshot) readScreenshot(data.screenshot, id);
-      telemetry.set(id, { receivedAt: Date.now(), telemetry: data.telemetry ? validateTelemetry(data.telemetry) : null });
+      telemetry.set(id, { receivedAt: Date.now(), telemetry: data.telemetry ? validateTelemetry(data.telemetry) : null,
+        supervisor: sanitizeSupervisor(data.supervisor) });
       return json(res, 200, { ok: true, goal: state.accounts[id].goal || null });
     }
     if (pathname === '/api/worker/next' && req.method === 'GET') {
