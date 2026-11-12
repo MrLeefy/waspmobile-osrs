@@ -1,0 +1,22 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {validatePolicy,createNextGoal,isCompletedForGoal}=require('./planner');
+let passed=0;
+function check(actual,expected){assert.deepEqual(actual,expected);passed++}
+const policy=validatePolicy({enabled:true,skills:['woodcutting','mining'],mode:'bank',sessionMinutes:45,targetLevel:70});
+check(policy.enabled,true);check(policy.skills.length,2);
+assert.throws(()=>validatePolicy({enabled:true,skills:['fishing'],mode:'bank',sessionMinutes:60}),/skills/);passed++;
+assert.throws(()=>validatePolicy({enabled:true,skills:['mining','mining'],mode:'bank',sessionMinutes:60}),/skills/);passed++;
+assert.throws(()=>validatePolicy({enabled:true,skills:['mining'],mode:'bank',sessionMinutes:0}),/duration/);passed++;
+const first=createNextGoal(policy,null);
+check(first.goal.skill,'woodcutting');
+const second=createNextGoal(first.policy,first.goal);
+check(second.goal.skill,'mining');
+const third=createNextGoal(second.policy,second.goal);
+check(third.goal.skill,'woodcutting');
+check(isCompletedForGoal({state:first.goal.id+'|BLOCK_WOODCUT_AND_FLETCH -> MAX_TIME'},first.goal),true);
+check(isCompletedForGoal({state:first.goal.id+'|BLOCK_WOODCUT_AND_FLETCH -> MAX_LEVEL'},first.goal),true);
+check(isCompletedForGoal({state:'another-id|BLOCK_WOODCUT_AND_FLETCH -> MAX_TIME'},first.goal),false);
+check(isCompletedForGoal({state:'BLOCK_WOODCUT_AND_FLETCH -> MAX_TIME'},first.goal),false);
+check(isCompletedForGoal({state:first.goal.id+'|WOODCUT_CHOP'},first.goal),false);
+console.log('PASS: '+passed+' planner checks (bounded policy, rotation, and goal-specific completion)');

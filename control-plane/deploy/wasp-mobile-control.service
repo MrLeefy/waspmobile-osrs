@@ -1,0 +1,30 @@
+[Unit]
+Description=Wasp Mobile private scalable account control plane
+Documentation=https://github.com/MrLeefy/waspmobile-osrs
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=waspmobile
+Group=waspmobile
+WorkingDirectory=/opt/wasp-mobile-control/current/control-plane
+EnvironmentFile=/etc/wasp-mobile-control.env
+ExecStart=/usr/bin/node /opt/wasp-mobile-control/current/control-plane/server.js
+Restart=on-failure
+RestartSec=5
+UMask=0077
+ProtectSystem=strict
+ReadWritePaths=/var/lib/wasp-mobile-control
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=256M
+TasksMax=64
+CPUQuota=50%
+LimitNOFILE=512
+
+[Install]
+WantedBy=multi-user.target

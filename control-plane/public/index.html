@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0c1522"><meta name="description" content="Private Wasp Mobile control dashboard">
+<link rel="manifest" href="/manifest.webmanifest"><title>Wasp Mobile · Command Center</title>
+<style>
+:root{color-scheme:dark;--bg:#0c1522;--panel:#172437;--line:#35475e;--text:#f1f7ff;--dim:#acbdd1;--good:#a6eaca;--warn:#ffc27c;--danger:#ffc0c0}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Arial,sans-serif}main{max-width:1100px;margin:auto;padding:16px 15px 60px}
+h1{font-size:22px;margin:0}h2{font-size:17px;margin:0 0 12px}h3{font-size:15px;margin:0 0 9px}p{margin:8px 0}
+header,.head,.row{display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap}
+header{padding:4px 0 16px}.sub{color:var(--dim);font-size:12px}.pane,.account{border:1px solid var(--line);background:var(--panel);border-radius:17px;padding:16px;margin-bottom:14px}
+button,input,select{font:inherit;border-radius:10px;min-height:42px}button{padding:8px 12px;border:1px solid var(--line);background:#253651;color:var(--text);cursor:pointer}
+button.primary{background:var(--good);border-color:var(--good);color:#071b18;font-weight:700}button:disabled{opacity:.45;cursor:default}
+input,select{width:100%;padding:9px 11px;background:#0e1a2a;color:var(--text);border:1px solid var(--line);min-width:0}label{display:block;font-size:12px;color:var(--dim);margin-bottom:5px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,342px),1fr));gap:14px}
+.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.stack>*+*{margin-top:10px}
+small{font-size:12px;color:var(--dim)}.pill{display:inline-flex;font-size:11px;padding:4px 9px;border-radius:20px;background:#344158;color:var(--dim)}.pill.ok{background:#244b3d;color:var(--good)}.pill.warn{background:#543c2b;color:var(--warn)}.pill.off{background:#4b303b;color:var(--danger)}
+.metric{display:flex;justify-content:space-between;border-bottom:1px solid #2d3c50;gap:10px;padding:5px 0;font-size:13px}.metric span:first-child{color:var(--dim)}
+.line{height:1px;background:var(--line);margin:14px 0}.actions{display:flex;flex-wrap:wrap;gap:8px}.actions button{flex:1}
+.frame{background:#0b1421;border:1px solid var(--line);border-radius:10px;width:100%;aspect-ratio:16/9;object-fit:contain}.placeholder{display:grid;place-items:center;color:var(--dim);border-style:dashed;font-size:13px}
+.hide{display:none!important}#note{min-height:22px;margin:0 0 12px;color:var(--good)}#note.error{color:var(--danger)}
+#unlockForm{display:flex;gap:10px;flex-wrap:wrap}#unlockForm input{min-width:200px;flex:1}
+#secretBox{border:1px solid var(--good);border-radius:12px;padding:12px;margin-bottom:14px;overflow-wrap:anywhere}
+#secretValue{font-size:12px;user-select:all;display:block;margin:10px 0;line-height:1.8}
+@media(max-width:420px){.pane,.account{padding:13px}.actions button{font-size:13px;padding:6px}.grid{gap:10px}}
+</style></head><body><main>
+<header><div><h1>Wasp Mobile</h1><div class="sub">Remote account command center</div></div><button id="lock" class="hide">Lock</button></header>
+<div id="note" role="status" aria-live="polite"></div>
+<section id="unlock" class="pane"><h2>Unlock dashboard</h2><p class="sub">Connect to your private controller. Your administrator token is kept in this tab for the current browser session.</p><form id="unlockForm"><input id="adminToken" type="password" required autocomplete="off" placeholder="Administrator token" aria-label="Administrator token"><button class="primary">Unlock</button></form></section>
+<div id="app" class="hide">
+<section id="secretBox" class="hide"><strong>New worker token — copy it now</strong><p class="sub">This secret is displayed only once. Configure it on the worker computer as CONTROL_WORKER_TOKEN. Do not share it or commit it to GitHub.</p><code id="secretValue"></code><button id="copySecret">Copy token</button><button id="hideSecret">Dismiss</button></section>
+<div class="head" style="margin-bottom:12px"><h2 style="margin:0">Accounts <span id="total" class="sub"></span></h2><div class="row"><span id="workers" class="pill"></span><button id="refresh">Refresh</button><button class="primary" id="add">+ Add account</button></div></div>
+<div class="grid" id="accounts"></div>
+<section id="addPanel" class="pane hide"><h2>New account slot</h2><p class="sub">Each account gets a unique worker token. Register as many as needed; simultaneous connected workers are capped separately according to host capacity.</p>
+<form id="createForm" class="stack"><div class="fields"><div><label for="newId">Account ID</label><input id="newId" placeholder="account-3" pattern="[a-z0-9][a-z0-9_-]{0,31}" required></div><div><label for="newLabel">Account label</label><input id="newLabel" placeholder="Mining account" maxlength="48"></div></div><div class="row"><button class="primary" type="submit">Create account</button><button id="cancelAdd" type="button">Cancel</button></div></form>
+</section>
+<section class="pane"><h3>Operational status</h3><p class="sub">Creating an account does not start a game client. Worker connected means the bridge responded. Playing is reported only after fresh client telemetry confirms login. Goal handoff and command delivery do not confirm execution.</p></section>
+</div></main>
+<script>
+(function(){
+  'use strict';
+  var token=sessionStorage.getItem('waspAdminToken')||'', busy=false, images=[];
+  function by(id){return document.getElementById(id)}
+  function escapeHTML(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+  function notify(s,err){by('note').textContent=s;by('note').classList.toggle('error',!!err)}
+  function lock(){token='';sessionStorage.removeItem('waspAdminToken');by('app').classList.add('hide');by('lock').classList.add('hide');by('unlock').classList.remove('hide');by('secretBox').classList.add('hide');images.forEach(URL.revokeObjectURL);images=[]}
+  async function api(uri,method,body){
+    var res=await fetch(uri,{method:method||'GET',cache:'no-store',headers:Object.assign({'X-Admin-Token':token},body==null?{}:{'Content-Type':'application/json'}),body:body==null?undefined:JSON.stringify(body)});
+    var data=await res.json();
+    if(res.status===401){lock();throw Error('Administrator token rejected')}
+    if(!res.ok)throw Error(data.error||('HTTP '+res.status));
+    return data;
+  }
+  async function refresh(){
+    if(!token||busy||document.visibilityState==='hidden')return;
+    // Do not discard partially edited goals when the dashboard auto-refreshes.
+    var focused=document.activeElement;
+    if(focused && ['INPUT','SELECT'].includes(focused.tagName) && focused.closest('#app'))return;
+    busy=true;
+    try{
+      var data=await api('/api/accounts');
+      by('unlock').classList.add('hide');by('app').classList.remove('hide');by('lock').classList.remove('hide');
+      by('total').textContent='('+data.registeredCount+' registered)';
+      by('workers').textContent='Up to '+data.maxConnectedWorkers+' workers online';
+      render(data.accounts||[]);
+    }catch(e){notify(e.message,true)}finally{busy=false}
+  }
+  function card(a){
+    var tel=a.gameTelemetryFresh?a.telemetry:null;
+    var isPlaying=!!(a.workerConnected&&tel&&tel.loggedIn);
+    var status=isPlaying?'Game reported logged in':a.workerConnected?'Worker connected':'Worker offline';
+    var pill=isPlaying?'ok':a.workerConnected?'warn':'off';
+    var activity=tel&&tel.script?tel.script:'Not verified';
+    var current=a.goal||{};
+    var screen='<div class="frame placeholder">No screenshot received from worker</div>';
+    var html='<div class="head"><div><h2 style="margin:0">'+escapeHTML(a.label)+'</h2><div class="sub">'+escapeHTML(a.id)+'</div></div><span class="pill '+pill+'">'+escapeHTML(status)+'</span></div>';
+    html+='<div class="line"></div>';
+    html+='<div class="metric"><span>Activity</span><span>'+escapeHTML(activity)+'</span></div>';
+    html+='<div class="metric"><span>Game state</span><span>'+escapeHTML(tel&&tel.state?tel.state:'Unknown')+'</span></div>';
+    html+='<div class="metric"><span>Inventory</span><span>'+escapeHTML(tel&&tel.invCount!=null?tel.invCount:'—')+'/28</span></div>';
+    html+='<div class="metric"><span>Run energy</span><span>'+escapeHTML(tel&&tel.runEnergy!=null?tel.runEnergy+'%':'—')+'</span></div>';
+    html+='<div class="metric"><span>Bridge heartbeat</span><span>'+escapeHTML(a.telemetryAgeSeconds==null?'Never':a.telemetryAgeSeconds+'s ago')+'</span></div>';
+    html+='<div class="metric"><span>Local launcher</span><span>'+escapeHTML(a.supervisor&&a.supervisor.workerSupervisor?a.supervisor.workerSupervisor:'Not configured / offline')+'</span></div>';
+    html+='<div class="line"></div><h3>Latest screenshot</h3>'+screen+'<p class="sub">This is a captured image, not a live video stream.</p>';
+    html+='<div class="line"></div><h3>Skilling goal</h3><form class="goalForm stack">';
+    html+='<div class="fields"><div><label>Skill</label><select name="skill"><option value="woodcutting">Woodcutting</option><option value="mining">Mining</option></select></div>';
+    html+='<div><label>Inventory</label><select name="mode"><option value="bank">Bank</option><option value="power_drop">Power drop</option></select></div></div>';
+    html+='<div class="fields"><div><label>Duration (minutes)</label><input type="number" name="durationMinutes" min="5" max="180" value="60" required></div>';
+    html+='<div><label>Target level (optional)</label><input name="targetLevel" type="number" min="1" max="99" placeholder="—"></div></div>';
+    html+='<button class="primary" type="submit">Save goal</button></form>';
+    html+='<p class="sub">'+(a.goal?'Planned: '+escapeHTML(current.skill)+' · '+escapeHTML(current.status):'No goal saved')+'</p>';
+    html+='<div class="line"></div><h3>Autonomous session loop</h3>';
+    html+='<p class="sub">Rule-based rotation. The LLM planner is not connected yet.</p>';
+    html+='<form class="autoForm stack"><div class="fields"><div><label>Skills</label><select name="skills"><option value="woodcutting">Woodcut only</option><option value="mining">Mine only</option><option value="both">Rotate both</option></select></div>';
+    html+='<div><label>Session minutes</label><input name="sessionMinutes" type="number" min="5" max="180" value="60" required></div></div>';
+    html+='<div class="fields"><div><label>Items</label><select name="mode"><option value="bank">Bank</option><option value="power_drop">Power drop</option></select></div>';
+    html+='<div><label>Target level (optional)</label><input name="targetLevel" type="number" min="1" max="99" placeholder="—"></div></div>';
+    html+='<div class="actions"><button class="primary" type="submit">Enable loop</button><button type="button" class="stopAuto">Disable loop</button></div></form>';
+    html+='<p class="sub">Autopilot: '+(a.autopilot&&a.autopilot.enabled?'Enabled':'Disabled')+'</p>';
+
+    html+='<div class="actions"><button class="primary" data-cmd="START">Start</button><button data-cmd="PAUSE">Pause</button><button data-cmd="RESUME">Resume</button><button data-cmd="HOP">World hop</button><button data-cmd="LOGOUT_STOP">Stop</button></div>';
+    html+='<p class="sub">Command: '+escapeHTML(a.command?a.command.command+' · '+a.command.status:'none')+'</p>';
+    html+='<div class="actions"><button class="rotate">Rotate worker token</button><button class="remove">Remove profile</button></div>';
+    if(a.proposal){html+='<p class="sub">AI proposal: '+escapeHTML(a.proposal.skill)+' ('+escapeHTML(a.proposal.durationMinutes)+' min)</p><button class="primary approve">Approve proposed goal</button>'}
+    var elem=document.createElement('article');elem.className='account';elem.innerHTML=html;
+    var form=elem.querySelector('.goalForm');
+    form.elements.skill.value=current.skill||'woodcutting';form.elements.mode.value=current.mode||'bank';
+    form.elements.durationMinutes.value=current.durationMinutes||60;form.elements.targetLevel.value=current.targetLevel||'';
+    form.addEventListener('submit',async function(ev){
+      ev.preventDefault();
+      var f=new FormData(form), payload={skill:f.get('skill'),mode:f.get('mode'),durationMinutes:Number(f.get('durationMinutes')),targetLevel:f.get('targetLevel')||null};
+      try{await api('/api/accounts/'+a.id+'/goal','POST',payload);notify('Goal saved. Simba script integration is required to execute it.');await refresh()}catch(e){notify(e.message,true)}
+    });
+    var autoForm=elem.querySelector('.autoForm');
+    var policy=a.autopilot||{};
+    autoForm.elements.skills.value=policy.skills?policy.skills.length===2?'both':policy.skills[0]:'woodcutting';
+    autoForm.elements.sessionMinutes.value=policy.sessionMinutes||60;
+    autoForm.elements.mode.value=policy.mode||'bank';
+    autoForm.elements.targetLevel.value=policy.targetLevel||'';
+    autoForm.addEventListener('submit',async function(ev){
+      ev.preventDefault();
+      var f=new FormData(autoForm);
+      var selector=f.get('skills');
+      var skills=selector==='both'?['woodcutting','mining']:[selector];
+      try{
+        await api('/api/accounts/'+a.id+'/autopilot','POST',
+          {enabled:true,skills:skills,mode:f.get('mode'),sessionMinutes:Number(f.get('sessionMinutes')),
+          targetLevel:f.get('targetLevel')||null});
+        notify('Autonomous goal loop enabled. A local configured worker and real client are still required.');
+        await refresh();
+      }catch(e){notify(e.message,true)}
+    });
+    elem.querySelector('.stopAuto').addEventListener('click',async function(){
+      var f=new FormData(autoForm), selector=f.get('skills');
+      try{
+        await api('/api/accounts/'+a.id+'/autopilot','POST',
+          {enabled:false,skills:selector==='both'?['woodcutting','mining']:[selector],
+          mode:f.get('mode'),sessionMinutes:Number(f.get('sessionMinutes')),targetLevel:f.get('targetLevel')||null});
+        notify('Autonomous goal renewal disabled. Use Stop to end a running session.');
+        await refresh();
+      }catch(e){notify(e.message,true)}
+    });
+    elem.querySelectorAll('[data-cmd]').forEach(function(btn){btn.addEventListener('click',async function(){
+      var command=btn.dataset.cmd;
+      if(command==='LOGOUT_STOP'&&!confirm('Queue logout/stop for '+a.label+'?'))return;
+      try{await api('/api/accounts/'+a.id+'/command','POST',{command:command});notify(command+' queued; not yet confirmed executed');await refresh()}catch(e){notify(e.message,true)}
+    })});
+    elem.querySelector('.rotate').addEventListener('click',async function(){
+      if(!confirm('Rotate worker token for '+a.label+'? The currently configured worker token will stop working.'))return;
+      try{
+        var data=await api('/api/accounts/'+a.id+'/rotate-token','POST',{});
+        by('secretValue').textContent=data.workerToken;
+        by('secretBox').classList.remove('hide');
+        by('secretBox').scrollIntoView({behavior:'smooth',block:'start'});
+        notify('Token rotated for '+a.label+'. Copy the new secret and update the worker.');
+        await refresh();
+      }catch(e){notify(e.message,true)}
+    });
+    elem.querySelector('.remove').addEventListener('click',async function(){
+      if(!confirm('Permanently remove '+a.label+' from the dashboard? This does not stop any game client. Stop the worker first.'))return;
+      try{await api('/api/accounts/'+a.id,'DELETE',{});notify('Account profile removed from dashboard');await refresh()}
+      catch(e){notify(e.message,true)}
+    });
+    var approval=elem.querySelector('.approve');
+    if(approval)approval.addEventListener('click',async function(){try{await api('/api/accounts/'+a.id+'/approve','POST',{});notify('Goal approved, awaiting script integration');await refresh()}catch(e){notify(e.message,true)}});
+    if(a.screenshotAvailable)screenFetch(a.id,elem.querySelector('.placeholder'));
+    return elem;
+  }
+  async function screenFetch(id,placeholder){
+    try{
+      var response=await fetch('/api/accounts/'+id+'/screenshot',{headers:{'X-Admin-Token':token},cache:'no-store'});
+      if(!response.ok)return;
+      var objectURL=URL.createObjectURL(await response.blob());images.push(objectURL);
+      if(!placeholder.isConnected){URL.revokeObjectURL(objectURL);return}
+      var img=document.createElement('img');img.className='frame';img.src=objectURL;img.alt='Captured client screenshot for '+id;
+      placeholder.replaceWith(img);
+    }catch(e){}
+  }
+  function render(list){images.forEach(URL.revokeObjectURL);images=[];var root=by('accounts');root.replaceChildren();if(!list.length){var p=document.createElement('p');p.className='sub';p.textContent='No registered accounts. Use + Add account to begin.';root.appendChild(p)}list.forEach(function(account){root.appendChild(card(account))})}
+  by('unlockForm').addEventListener('submit',function(ev){ev.preventDefault();token=by('adminToken').value.trim();sessionStorage.setItem('waspAdminToken',token);by('adminToken').value='';refresh()});
+  by('lock').addEventListener('click',lock);
+  by('refresh').addEventListener('click',refresh);
+  by('add').addEventListener('click',function(){by('addPanel').classList.toggle('hide')});
+  by('cancelAdd').addEventListener('click',function(){by('addPanel').classList.add('hide')});
+  by('createForm').addEventListener('submit',async function(ev){
+    ev.preventDefault();
+    try{
+      var data=await api('/api/accounts','POST',{id:by('newId').value.trim(),label:by('newLabel').value.trim()});
+      by('secretValue').textContent=data.workerToken;by('secretBox').classList.remove('hide');by('addPanel').classList.add('hide');
+      by('createForm').reset();notify('Account profile created. Copy its worker token now.');await refresh();
+    }catch(e){notify(e.message,true)}
+  });
+  by('copySecret').addEventListener('click',async function(){try{await navigator.clipboard.writeText(by('secretValue').textContent);notify('Worker token copied')}catch(e){notify('Unable to copy: select the token manually',true)}});
+  by('hideSecret').addEventListener('click',function(){by('secretValue').textContent='';by('secretBox').classList.add('hide')});
+  if(token)refresh();
+  document.addEventListener('visibilitychange',function(){if(!document.hidden)refresh()});
+  setInterval(refresh,12000);
+  if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(function(){});
+})();
+</script></body></html>
