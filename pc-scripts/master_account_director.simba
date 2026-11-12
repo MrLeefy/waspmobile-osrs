@@ -750,6 +750,10 @@ end;
 
 function TMasterDirector.CheckCrowdAndHop(maxPlayersAllowed: Integer = 3): Boolean;
 begin
+  // Preserve the manually selected world during a remote goal; the operator
+  // may still explicitly request a world hop from the dashboard.
+  if Self.RemoteGoalActive then
+    Exit(False);
   if (Profiles = []) or (not InRange(ProfileIndex, 0, High(Profiles))) or
      (Length(Profiles[ProfileIndex].Worlds) <= 1) then
     Exit(False);
