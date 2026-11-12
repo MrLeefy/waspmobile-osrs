@@ -89,6 +89,9 @@ type
     AlchTargets: TItemArray;
 
     SubModeBank: Boolean;
+    RemoteGoalId, RemoteSkill: String;
+    RemoteGoalActive, RemoteModeBank: Boolean;
+    RemoteTargetLevel: Integer;
   end;
 
 var
@@ -260,6 +263,72 @@ begin
 
   Logger.Info('=== MASTER DIRECTOR BLOCK: ' + ToStr(Self.CurrentBlock) +
               ' for ~' + ToStr(durationMin) + ' mins ===');
+end;
+
+(*
+  The local PC supervisor writes id|skill|mode|minutes|targetLevel
+  to SimbaPath/Swarm/goals/<BotID>.goal. Only validated fields alter activity.
+*)
+procedure TMasterDirector.ApplyRemoteGoal();
+var
+  filePath, raw, rest, goalId, skill, mode, minutesText, targetText: String;
+  minutes, targetLevel: Integer;
+begin
+  if Human.BotID = '' then
+    Exit;
+  filePath := SimbaEnv.SimbaPath + 'Swarm' + PATH_SEP + 'goals' + PATH_SEP + Human.BotID + '.goal';
+  if not FileExists(filePath) then
+    Exit;
+  raw := FileRead(filePath).Trim();
+  if raw = '' then
+    Exit;
+  goalId := raw.Before('|');
+  rest := raw.After('|');
+  skill := rest.Before('|');
+  rest := rest.After('|');
+  mode := rest.Before('|');
+  rest := rest.After('|');
+  minutesText := rest.Before('|');
+  targetText := rest.After('|').Trim();
+
+  if (goalId = '') or (goalId = Self.RemoteGoalId) then
+    Exit;
+  if (skill <> 'woodcutting') and (skill <> 'mining') then
+    Exit;
+  if (mode <> 'bank') and (mode <> 'power_drop') then
+    Exit;
+  minutes := StrToIntDef(minutesText, 0);
+  targetLevel := StrToIntDef(targetText, 0);
+  if (minutes < 5) or (minutes > 180) or (targetLevel < 0) or (targetLevel > 99) then
+    Exit;
+
+  if skill = 'woodcutting' then
+  begin
+    Self.EnableWoodcut := True;
+    Self.CurrentBlock := EDirectorBlock.BLOCK_WOODCUT_AND_FLETCH;
+    Self.RefreshTreesForLevel();
+    if Self.TreeObjs = [] then
+      Exit;
+  end
+  else
+  begin
+    Self.EnableMining := True;
+    Self.CurrentBlock := EDirectorBlock.BLOCK_MINING_AND_GEMS;
+    Self.RefreshRocksForLevel();
+    if Self.RockObjs = [] then
+      Exit;
+  end;
+
+  Self.RemoteGoalId := goalId;
+  Self.RemoteSkill := skill;
+  Self.RemoteModeBank := mode = 'bank';
+  Self.RemoteTargetLevel := targetLevel;
+  Self.RemoteGoalActive := True;
+  Self.SubModeBank := Self.RemoteModeBank;
+  Self.BlockTimer.Start(minutes * MINUTE);
+  Self.NeedsCleanBankTransition := True;
+  Activity.Restart();
+  Logger.Info('[Control Plane] Goal applied: ' + skill + ' for ' + ToStr(minutes) + ' minutes.');
 end;
 
 function TMasterDirector.GetReportValues(): TStringArray;
@@ -600,7 +669,19 @@ begin
     Exit(EDirectorState.LEVEL_UP);
 
   if Self.BlockTimer.IsFinished then
+  begin
+    if Self.RemoteGoalActive then
+      Exit(EDirectorState.MAX_TIME);
     Exit(EDirectorState.ROTATE_ACTIVITY_BLOCK);
+  end;
+
+  if Self.RemoteGoalActive and (Self.RemoteTargetLevel > 0) then
+  begin
+    if (Self.RemoteSkill = 'woodcutting') and (Stats.GetLevel(ESkill.WOODCUTTING) >= Self.RemoteTargetLevel) then
+      Exit(EDirectorState.MAX_LEVEL);
+    if (Self.RemoteSkill = 'mining') and (Stats.GetLevel(ESkill.MINING) >= Self.RemoteTargetLevel) then
+      Exit(EDirectorState.MAX_LEVEL);
+  end;
 
   if Bank.IsOpen() then
   begin
@@ -682,6 +763,7 @@ begin
   Self.Init();
 
   repeat
+    Self.ApplyRemoteGoal();
     state := Self.GetState();
     Logger.Info('Director: ' + ToStr(Self.CurrentBlock) + ' -> ' + ToStr(state) +
                 ' | Attention: ' + ToStr(Human.Attention));
@@ -718,7 +800,10 @@ begin
         if Human.DepositItems(Self.KeepTools) then
         begin
           Self.NeedsCleanBankTransition := False;
-          Self.SubModeBank := RandomBoolean(0.65);
+          if Self.RemoteGoalActive then
+            Self.SubModeBank := Self.RemoteModeBank
+          else
+            Self.SubModeBank := RandomBoolean(0.65);
           Human.RollInventoryLimit();
           if RandomBoolean(0.65) then
             Bank.Close();
@@ -759,7 +844,10 @@ begin
       EDirectorState.DROP_ITEMS:
         begin
           Human.HumanizedDrop(Self.DroppableItems);
-          Self.SubModeBank := RandomBoolean(0.60);
+          if Self.RemoteGoalActive then
+            Self.SubModeBank := Self.RemoteModeBank
+          else
+            Self.SubModeBank := RandomBoolean(0.60);
         end;
 
       EDirectorState.BANKSTAND_WORK:
