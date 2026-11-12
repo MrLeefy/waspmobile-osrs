@@ -11,7 +11,7 @@ const HOST = process.env.CONTROL_HOST || '127.0.0.1';
 const DATA_DIR = path.resolve(process.env.CONTROL_DATA_DIR || path.join(__dirname, 'data'));
 const ADMIN_TOKEN = process.env.CONTROL_ADMIN_TOKEN || '';
 const WORKER_TOKENS = JSON.parse(process.env.CONTROL_WORKER_TOKENS || '{}');
-const MAX_ACCOUNTS = 2;
+const MAX_CONNECTED_WORKERS = Math.max(1, Number(process.env.CONTROL_MAX_CONNECTED_WORKERS) || 2);
 const VALID_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const SKILLS = new Set(['woodcutting', 'mining']);
 const COMMANDS = new Set(['PAUSE', 'RESUME', 'HOP', 'LOGOUT_STOP']);
@@ -24,8 +24,13 @@ function secureEquals(actual, expected) {
 }
 function authentication(req, type, accountId) {
   const got = req.headers[type === 'admin' ? 'x-admin-token' : 'x-worker-token'];
-  const expected = type === 'admin' ? ADMIN_TOKEN : WORKER_TOKENS[accountId];
-  return typeof got === 'string' && !!expected && secureEquals(got, expected);
+  const account = state?.accounts?.[accountId];
+  const legacy = WORKER_TOKENS[accountId];
+  const expected = type === 'admin' ? ADMIN_TOKEN : legacy || account?.workerTokenHash;
+  if (typeof got !== 'string' || !expected) return false;
+  return type === 'worker' && !legacy
+    ? secureEquals(crypto.createHash('sha256').update(got).digest('hex'), expected)
+    : secureEquals(got, expected);
 }
 function load() {
   try { return JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'state.json'), 'utf8')); }
@@ -70,7 +75,7 @@ function accountView(id, account) {
   const now = Date.now();
   const age = live ? now - live.receivedAt : null;
   return {
-    ...account,
+    ...Object.fromEntries(Object.entries(account).filter(([key]) => key !== 'workerTokenHash')),
     id,
     workerConnected: !!live && age <= LIVE_FOR_MS,
     telemetryAgeSeconds: age === null ? null : Math.round(age / 1000),
@@ -115,6 +120,11 @@ async function handler(req, res) {
     const id = req.headers['x-account-id'];
     if (typeof id !== 'string' || !validAccount(id) || !authentication(req, 'worker', id)) return error(res, 401, 'Invalid worker credentials');
     if (pathname === '/api/worker/heartbeat' && req.method === 'POST') {
+      const alreadyConnected = telemetry.has(id) && Date.now() - telemetry.get(id).receivedAt <= LIVE_FOR_MS;
+      if (!alreadyConnected) {
+        const currentlyConnected = [...telemetry.values()].filter(t => Date.now() - t.receivedAt <= LIVE_FOR_MS).length;
+        if (currentlyConnected >= MAX_CONNECTED_WORKERS) return error(res, 429, 'Concurrent worker limit reached; raise CONTROL_MAX_CONNECTED_WORKERS after capacity testing');
+      }
       const data = await body(req);
       if (data.screenshot) readScreenshot(data.screenshot, id);
       telemetry.set(id, { receivedAt: Date.now(), telemetry: data.telemetry ? validateTelemetry(data.telemetry) : null });
@@ -136,19 +146,18 @@ async function handler(req, res) {
   }
   if (!pathname.startsWith('/api/') || !authentication(req, 'admin')) return error(res, 401, 'Administrator token required');
   if (pathname === '/api/accounts' && req.method === 'GET') {
-    return json(res, 200, { limit: MAX_ACCOUNTS, accounts: Object.entries(state.accounts).map(([id, account]) => accountView(id, account)) });
+    return json(res, 200, { registeredCount: Object.keys(state.accounts).length, maxConnectedWorkers: MAX_CONNECTED_WORKERS, accounts: Object.entries(state.accounts).map(([id, account]) => accountView(id, account)) });
   }
   if (pathname === '/api/accounts' && req.method === 'POST') {
     const data = await body(req);
     const id = typeof data.id === 'string' ? data.id.trim() : '';
     if (!VALID_ID.test(id)) return error(res, 400, 'Account ID must be lowercase letters, digits, underscore or hyphen');
     if (state.accounts[id]) return error(res, 409, 'Account ID already exists');
-    if (Object.keys(state.accounts).length >= MAX_ACCOUNTS) return error(res, 409, 'Two-account test limit reached');
-    if (!WORKER_TOKENS[id]) return error(res, 400, 'Configure a unique CONTROL_WORKER_TOKENS entry for this account first');
+    const generatedToken = crypto.randomBytes(32).toString('hex');
     const label = typeof data.label === 'string' ? data.label.trim().slice(0, 48) : '';
-    state.accounts[id] = { label: label || id, createdAt: new Date().toISOString(), goal: null };
+    state.accounts[id] = { label: label || id, createdAt: new Date().toISOString(), goal: null, workerTokenHash: crypto.createHash('sha256').update(generatedToken).digest('hex') };
     persist();
-    return json(res, 201, { account: accountView(id, state.accounts[id]) });
+    return json(res, 201, { account: accountView(id, state.accounts[id]), workerToken: generatedToken, warning: 'Copy this worker token now: it is returned only once.' });
   }
   const match = pathname.match(/^\/api\/accounts\/([a-z0-9_-]{1,32})(?:\/(goal|proposal|approve|command|screenshot))?$/);
   if (!match || !validAccount(match[1])) return error(res, 404, 'Account not found');
@@ -193,8 +202,8 @@ async function handler(req, res) {
 function createServer() {
   if (ADMIN_TOKEN.length < 32) throw new Error('CONTROL_ADMIN_TOKEN must be at least 32 characters');
   const values = Object.values(WORKER_TOKENS);
-  if (!values.length || values.some(v => typeof v !== 'string' || v.length < 32) || new Set(values).size !== values.length) {
-    throw new Error('Provide unique CONTROL_WORKER_TOKENS values of at least 32 characters');
+  if (values.some(v => typeof v !== 'string' || v.length < 32) || new Set(values).size !== values.length) {
+    throw new Error('If CONTROL_WORKER_TOKENS are supplied, each token must be unique and at least 32 characters');
   }
   fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
   state = load();
