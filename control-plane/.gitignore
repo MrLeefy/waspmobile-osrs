@@ -4,3 +4,8 @@
 /.env.*
 /logs/
 /certs/
+
+# Private Windows worker configuration and generated secrets
+/worker-host.json
+/worker-profiles.json
+/*.secret
